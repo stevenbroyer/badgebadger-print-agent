@@ -13,7 +13,11 @@ mod printer;
 use std::sync::Arc;
 
 use serde::Serialize;
-use tauri::{Emitter, Manager};
+use tauri::{
+    menu::{Menu, MenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    Emitter, Manager, WindowEvent,
+};
 use tauri_plugin_autostart::MacosLauncher;
 use tokio::sync::Mutex;
 
@@ -193,6 +197,17 @@ startxref\n\
     PDF.to_vec()
 }
 
+// Reveal the main window from a tray-driven entry point (left-click on
+// the tray icon, or "Open" in the tray menu). Idempotent — safe to call
+// when the window is already visible.
+fn show_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
 pub fn run() {
     // Verbose logs in dev (cargo run / tauri dev), warn-and-up in
     // release. Operators won't normally see these but they help when
@@ -237,7 +252,49 @@ pub fn run() {
                     tracing::error!(?err, "http listener stopped");
                 }
             });
+
+            // System tray. Keeps the agent reachable when the window is
+            // hidden — left-click the tray icon reveals the window, the
+            // tray menu offers Open / Quit. The X button on the window
+            // hides instead of exits (see on_window_event below) so the
+            // agent stays running per the footer's promise.
+            let open_item =
+                MenuItem::with_id(app, "open", "Open BadgeBadger", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&open_item, &quit_item])?;
+
+            TrayIconBuilder::with_id("main")
+                .icon(app.default_window_icon().unwrap().clone())
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .tooltip("BadgeBadger Print Agent")
+                .on_menu_event(|app_handle, event| match event.id().as_ref() {
+                    "quit" => app_handle.exit(0),
+                    "open" => show_main_window(app_handle),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        show_main_window(tray.app_handle());
+                    }
+                })
+                .build(app)?;
+
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            // Closing the window hides it; the agent stays in the tray
+            // and continues serving HTTP. Use the tray's "Quit" item to
+            // actually exit. Matches the footer copy in the React UI.
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                let _ = window.hide();
+                api.prevent_close();
+            }
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
