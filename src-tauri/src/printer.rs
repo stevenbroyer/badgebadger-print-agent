@@ -95,13 +95,19 @@ mod windows_printer {
     pub fn default_printer() -> anyhow::Result<Option<String>> {
         unsafe {
             let mut len: u32 = 0;
-            let _ = GetDefaultPrinterW(None, &mut len);
+            // Sizing call: returns BOOL=false with ERROR_INSUFFICIENT_BUFFER,
+            // sets `len` to the required size. `len == 0` ⇒ no default.
+            // windows-0.58 takes bare PWSTR (not Option<PWSTR>) and returns
+            // BOOL (not Result), unlike older windows-rs versions.
+            let _ = GetDefaultPrinterW(windows::core::PWSTR(std::ptr::null_mut()), &mut len);
             if len == 0 {
                 return Ok(None);
             }
             let mut buf = vec![0u16; len as usize];
-            GetDefaultPrinterW(Some(windows::core::PWSTR(buf.as_mut_ptr())), &mut len)
-                .map_err(|e| anyhow!("GetDefaultPrinterW failed: {e:?}"))?;
+            let ok = GetDefaultPrinterW(windows::core::PWSTR(buf.as_mut_ptr()), &mut len);
+            if !ok.as_bool() {
+                return Err(anyhow!("GetDefaultPrinterW failed"));
+            }
             // GetDefaultPrinterW writes a null-terminated string; trim.
             let name = String::from_utf16_lossy(
                 &buf[..buf.iter().position(|&c| c == 0).unwrap_or(buf.len())],

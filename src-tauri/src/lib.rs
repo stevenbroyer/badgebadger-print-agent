@@ -58,21 +58,27 @@ async fn get_status(state: tauri::State<'_, SharedState>) -> Result<AgentStatus,
 }
 
 #[tauri::command]
-async fn test_print(app: tauri::AppHandle) -> Result<String, String> {
-    // Submit a hand-rolled minimal CR-80 PDF straight to the OS
-    // default printer. Lets the operator confirm the agent's print
-    // dispatch works without involving the web app. Emits the same
-    // `print` event the HTTP path uses so test prints land in the
-    // in-app activity feed.
+async fn test_print(
+    app: tauri::AppHandle,
+    printer_name: Option<String>,
+) -> Result<String, String> {
+    // Submit a hand-rolled minimal CR-80 PDF to the chosen printer
+    // (or OS default if `printer_name` is None / empty). Lets the
+    // operator confirm the agent's print dispatch works without
+    // involving the web app. Emits the same `print` event the HTTP
+    // path uses so test prints land in the in-app activity feed.
     let started_at = http_server_iso_now();
     let pdf = test_card_pdf();
-    let printer = match printer::default_printer() {
-        Ok(Some(p)) => p,
-        _ => {
-            let msg = "No default printer set on this computer. Open System Settings → Printers and pick one.".to_string();
-            emit_print(&app, &started_at, "(unset)", Some("Test print"), false, Some(&msg));
-            return Err(msg);
-        }
+    let printer = match printer_name {
+        Some(p) if !p.trim().is_empty() => p,
+        _ => match printer::default_printer() {
+            Ok(Some(p)) => p,
+            _ => {
+                let msg = "No printer selected and no OS default configured. Pick one from the dropdown or set a system default.".to_string();
+                emit_print(&app, &started_at, "(unset)", Some("Test print"), false, Some(&msg));
+                return Err(msg);
+            }
+        },
     };
     let result = printer::print_pdf_bytes(&pdf, &printer).await;
     match &result {
@@ -95,7 +101,7 @@ async fn test_print(app: tauri::AppHandle) -> Result<String, String> {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct LibPrintEvent<'a> {
     started_at: &'a str,

@@ -417,6 +417,44 @@ a:hover {
   text-transform: uppercase;
 }
 
+.printer-select {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.printer-select__label {
+  color: var(--fg-muted);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.printer-select__input {
+  flex: 1;
+  padding: 7px 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg-elev-2);
+  color: inherit;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.printer-select__input:hover {
+  border-color: rgba(99, 102, 241, 0.45);
+}
+
+.printer-select__input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.18);
+}
+
 /* ─── Activity ────────────────────────────────────────────────── */
 .activity-list {
   list-style: none;

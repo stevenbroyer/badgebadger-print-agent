@@ -13,6 +13,7 @@ export default function App() {
   const [status, setStatus] = useState<AgentStatus | null>(null);
   const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [testing, setTesting] = useState(false);
+  const [selectedPrinter, setSelectedPrinter] = useState<string | null>(null);
   const toast = useToast();
 
   // Poll status. Cheap (just a Tauri command, no IPC heavy lifting),
@@ -75,7 +76,9 @@ export default function App() {
   async function handleTestPrint() {
     setTesting(true);
     try {
-      const message = await invoke<string>("test_print");
+      const message = await invoke<string>("test_print", {
+        printerName: selectedPrinter,
+      });
       toast.show({
         tone: "success",
         title: "Test print queued",
@@ -164,6 +167,8 @@ export default function App() {
       <PrinterCard
         printers={status?.printers ?? []}
         defaultPrinter={status?.defaultPrinter ?? null}
+        selectedPrinter={selectedPrinter}
+        onSelectPrinter={setSelectedPrinter}
         onTestPrint={() => void handleTestPrint()}
         testing={testing}
       />
