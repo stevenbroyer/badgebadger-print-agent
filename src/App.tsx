@@ -104,6 +104,14 @@ export default function App() {
           : "The HTTP listener didn't start. Restart the agent and try again.",
       },
       {
+        id: "helper",
+        label: "PDF helper installed",
+        done: status.helperInstalled,
+        helpText: status.helperInstalled
+          ? "SumatraPDF detected — the agent uses it to dispatch PDFs to your printer."
+          : "Install SumatraPDF (https://www.sumatrapdfreader.org/download-free-pdf-viewer) — it's the bridge between PDFs and the Windows print spooler. Stock Windows uses Edge as the PDF handler, but Edge can't print to a specific queue from the command line. SumatraPDF can. Free, 6 MB, install via the official MSI.",
+      },
+      {
         id: "printer",
         label: "Printer detected",
         done: status.printers.length > 0,

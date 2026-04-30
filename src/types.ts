@@ -4,6 +4,11 @@ export type AgentStatus = {
   listening: boolean;
   defaultPrinter: string | null;
   printers: string[];
+  // Whether the third-party PDF helper (SumatraPDF on Windows; n/a on
+  // Mac/Linux which use CUPS) is installed. False on Windows blocks
+  // the agent from actually printing — surfaced as a setup-checklist
+  // step with an install link in the UI.
+  helperInstalled: boolean;
 };
 
 // Emitted from Rust on the `print` Tauri event whenever a job is

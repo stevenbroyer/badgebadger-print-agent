@@ -1,18 +1,37 @@
-// Printer integration. Three platform-specific paths:
+// Printer integration. Two platform-specific paths:
 //
 // • Windows: enumerate printers via `EnumPrinters` (winspool API),
 //   fetch the OS default via `GetDefaultPrinter`, print PDFs by
-//   shelling out to `ShellExecuteW` with the `printto` verb. The
-//   `printto` verb invokes whatever PDF handler the user has set as
-//   default (Edge ships built-in on Win10/11; Adobe Reader / Foxit
-//   / SumatraPDF also work). The handler in turn submits the PDF to
-//   the chosen printer queue and exits silently.
+//   shelling out to a CLI PDF tool. v1 prefers SumatraPDF
+//   (`SumatraPDF.exe -print-to <queue> -silent <file>`) because:
+//
+//     1. It's the only widely-available Windows PDF handler with a
+//        documented, scriptable CLI for printing to a named queue.
+//     2. Microsoft Edge — Win10/11's default PDF handler — does NOT
+//        implement the `printto` shell verb. Falling back to
+//        `ShellExecuteW("printto", ...)` is a silent no-op on stock
+//        installs (the call returns success but no print happens).
+//     3. Adobe Reader / Foxit DO implement `printto` but require
+//        their own install. SumatraPDF is a single 6MB exe with no
+//        bundled cruft.
+//
+//   Operators install SumatraPDF themselves (free, GPLv3, link in
+//   the agent README + setup wizard). If it's not on PATH or in a
+//   common install dir, we fall back to ShellExecute("printto") as
+//   a last resort + return a clear error so the user knows what to
+//   install.
+//
+//   **TODO (v0.2 / production)**: replace SumatraPDF with
+//   `pdfium-render` (BSD) for in-process rendering → bitmap → Win32
+//   `WritePrinter`. Removes the SumatraPDF install requirement and
+//   gives us full control over scaling, bleed, and color management.
+//   Adds ~8MB to the agent binary; worthwhile for the multi-tenant
+//   product.
 //
 // • macOS / Linux: use the `lp` command (CUPS). Built into macOS,
-//   nearly always present on Linux. Same approach as the Phase-1
-//   server-side direct-print path we explored earlier — the agent's
-//   value on these platforms is mostly the local-HTTP listener +
-//   pairing UX rather than the print backend itself.
+//   nearly always present on Linux. The agent's value on these
+//   platforms is mostly the local-HTTP listener + pairing UX rather
+//   than the print backend itself.
 
 use std::path::PathBuf;
 use tempfile::NamedTempFile;
@@ -20,24 +39,14 @@ use tokio::io::AsyncWriteExt;
 
 #[cfg(target_os = "windows")]
 mod windows_printer {
-    use super::*;
     use anyhow::{Context, anyhow};
-    use std::os::windows::ffi::OsStrExt;
-    use std::ptr;
     use windows::Win32::Graphics::Printing::{
-        EnumPrintersW, GetDefaultPrinterW, PRINTER_ENUM_LOCAL, PRINTER_ENUM_CONNECTIONS,
+        EnumPrintersW, GetDefaultPrinterW, PRINTER_ENUM_CONNECTIONS, PRINTER_ENUM_LOCAL,
         PRINTER_INFO_2W,
     };
     use windows::Win32::UI::Shell::ShellExecuteW;
     use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
     use windows::core::{HSTRING, PCWSTR};
-
-    fn to_wide(s: &str) -> Vec<u16> {
-        std::ffi::OsStr::new(s)
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect()
-    }
 
     pub fn list_printers() -> anyhow::Result<Vec<String>> {
         unsafe {
@@ -101,9 +110,84 @@ mod windows_printer {
         }
     }
 
+    /// Locate SumatraPDF on the host. Tries PATH first (most
+    /// portable; users who installed via Chocolatey / Scoop end up
+    /// here), then a handful of common install locations the
+    /// official MSI / portable distribution writes to. Returns None
+    /// when SumatraPDF isn't installed; the caller falls back to
+    /// ShellExecute("printto").
+    pub fn find_sumatra() -> Option<std::path::PathBuf> {
+        use std::path::Path;
+        // PATH lookup — works for portable installs the user dropped
+        // somewhere reachable.
+        if let Ok(path) = std::env::var("PATH") {
+            for dir in std::env::split_paths(&path) {
+                let candidate = dir.join("SumatraPDF.exe");
+                if candidate.is_file() {
+                    return Some(candidate);
+                }
+            }
+        }
+        // Common install locations.
+        let well_known = [
+            r"C:\Program Files\SumatraPDF\SumatraPDF.exe",
+            r"C:\Program Files (x86)\SumatraPDF\SumatraPDF.exe",
+        ];
+        for p in well_known {
+            let path = Path::new(p);
+            if path.is_file() {
+                return Some(path.to_path_buf());
+            }
+        }
+        // User-local installs (default for the official portable .zip
+        // when extracted to %LOCALAPPDATA%).
+        if let Ok(local) = std::env::var("LOCALAPPDATA") {
+            let candidate = Path::new(&local).join("SumatraPDF").join("SumatraPDF.exe");
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+        None
+    }
+
     pub fn print_pdf(path: &std::path::Path, printer_name: &str) -> anyhow::Result<()> {
-        // ShellExecuteW with the `printto` verb. Args[0] is the
-        // printer name, quoted to handle queues with spaces.
+        // Preferred path: shell out to SumatraPDF. It's the only
+        // Windows PDF handler with a reliable scriptable CLI for
+        // printing to a specific queue, and it works without Edge /
+        // Adobe Reader being installed.
+        if let Some(sumatra) = find_sumatra() {
+            tracing::info!(?sumatra, ?printer_name, "printing via SumatraPDF");
+            let status = std::process::Command::new(&sumatra)
+                .arg("-print-to")
+                .arg(printer_name)
+                // -silent suppresses error dialogs so the user
+                // never sees a window flash from SumatraPDF itself.
+                .arg("-silent")
+                // -exit-when-done so SumatraPDF closes after
+                // dispatching the print job (it lingers by default
+                // when launched without a UI).
+                .arg("-exit-when-done")
+                .arg(path)
+                .status()
+                .with_context(|| format!("could not invoke {}", sumatra.display()))?;
+            if status.success() {
+                return Ok(());
+            }
+            tracing::warn!(?status, "SumatraPDF exited non-zero; falling back to printto");
+        } else {
+            tracing::warn!(
+                "SumatraPDF not found — falling back to ShellExecute('printto') which silently no-ops on stock Edge installs"
+            );
+        }
+
+        // Fallback: ShellExecuteW with the `printto` verb. Works only
+        // when an Adobe Reader / Foxit-class PDF handler that
+        // implements the verb is the registered default. Stock
+        // Win10/11 ships Microsoft Edge as the PDF handler and
+        // Edge does NOT implement `printto`, so this fallback is
+        // a silent no-op on most untouched installs. Returns a
+        // clear error to the caller in that case so the operator
+        // sees an actionable message in the agent UI.
         let verb = HSTRING::from("printto");
         let file = HSTRING::from(path.to_string_lossy().as_ref());
         let args_str = format!(r#""{}""#, printer_name);
@@ -120,11 +204,19 @@ mod windows_printer {
             // ShellExecute returns an HINSTANCE > 32 on success.
             if (result.0 as isize) <= 32 {
                 return Err(anyhow!(
-                    "ShellExecute returned {} for printto verb",
+                    "ShellExecute('printto') returned {}. Stock Windows installs use Microsoft Edge as the PDF handler, and Edge doesn't implement the printto verb — install SumatraPDF (https://www.sumatrapdfreader.org) and the agent will pick it up automatically.",
                     result.0 as isize
-                ))
-                .context("Windows print dispatch failed");
+                ));
             }
+        }
+        // ShellExecute returning > 32 means the handler accepted the
+        // call, but on Edge that "acceptance" is a silent no-op —
+        // the call returns success while doing nothing. Surface a
+        // warning so the operator can investigate if no card prints.
+        if find_sumatra().is_none() {
+            tracing::warn!(
+                "ShellExecute('printto') returned success, but if Edge is your default PDF handler this was likely a no-op. Install SumatraPDF for reliable printing."
+            );
         }
         Ok(())
     }
@@ -190,6 +282,22 @@ mod unix_printer {
             return Err(anyhow!("lp exited with {status}"));
         }
         Ok(())
+    }
+}
+
+/// True if a third-party PDF helper that the agent depends on is
+/// installed. Drives the setup checklist in the agent UI.
+///
+/// • Windows: needs SumatraPDF to bridge PDF → printer queue.
+/// • macOS / Linux: CUPS / `lp` handles PDFs natively; always true.
+pub fn helper_installed() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        windows_printer::find_sumatra().is_some()
+    }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        true
     }
 }
 

@@ -24,6 +24,14 @@ pub struct AgentStatus {
     pub listening: bool,
     pub default_printer: Option<String>,
     pub printers: Vec<String>,
+    /// Whether SumatraPDF is detected on PATH or in a known install
+    /// location. Required on Windows for reliable PDF printing —
+    /// stock Win10/11 has Edge as the default PDF handler and Edge
+    /// doesn't implement the `printto` shell verb. The UI surfaces
+    /// an install link in the setup checklist when this is false.
+    /// On macOS / Linux we don't need it (CUPS handles PDFs natively
+    /// via `lp`), so it's reported true by default on those platforms.
+    pub helper_installed: bool,
 }
 
 #[derive(Debug, Default)]
@@ -39,11 +47,13 @@ async fn get_status(state: tauri::State<'_, SharedState>) -> Result<AgentStatus,
     let s = state.lock().await;
     let printers = printer::list_printers().unwrap_or_default();
     let default_printer = printer::default_printer().ok().flatten();
+    let helper_installed = printer::helper_installed();
     Ok(AgentStatus {
         listener_port: s.listener_port,
         listening: s.listening,
         default_printer,
         printers,
+        helper_installed,
     })
 }
 

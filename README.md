@@ -17,9 +17,33 @@ live on the existing browser-print flow.
 - **Tauri 2** — small native binary (~5MB), Rust backend, web frontend.
 - **React + Vite + TypeScript** — frontend for the agent's tray window.
 - **axum** — local HTTP listener.
-- **windows-rs** — Windows print API via `ShellExecute` with the `printto` verb.
-  Uses whichever PDF viewer is the OS default (Edge on stock Win10/11, or
-  Adobe Reader / Foxit / etc. if installed) to dispatch the print job.
+- **windows-rs + SumatraPDF (runtime dep)** — see Windows Printing below.
+
+## Windows printing requires SumatraPDF (v1)
+
+The agent dispatches PDFs to a named printer queue by shelling out to
+**SumatraPDF**. Operators have to install it once per workstation:
+<https://www.sumatrapdfreader.org/download-free-pdf-viewer> (free,
+GPLv3, ~6 MB single MSI). The agent UI surfaces this as a setup
+checklist item — green when SumatraPDF is detected on PATH or in any
+of the standard install dirs (`C:\Program Files\SumatraPDF\`, `C:\Program Files (x86)\SumatraPDF\`, `%LOCALAPPDATA%\SumatraPDF\`).
+
+**Why not just use Edge / `printto`?** Microsoft Edge is the default
+PDF handler on stock Win10/11 and **does not implement the `printto`
+shell verb**. Calling `ShellExecute("printto", file, printerName)`
+returns success but silently does nothing on stock installs. Adobe
+Reader / Foxit DO implement `printto` if installed, but neither has a
+documented "always available" CLI for printing to a specific queue
+the way SumatraPDF does. SumatraPDF wins on reliability + size +
+consistent CLI.
+
+**v0.2 plan**: replace the SumatraPDF shell-out with in-process PDF
+rendering via the [`pdfium-render`](https://github.com/ajrcarey/pdfium-render)
+crate (BSD-3) — render each PDF page to a bitmap and submit via the
+Win32 `WritePrinter` API. Removes the SumatraPDF install requirement,
+adds ~8 MB to the agent binary, and gives us full control over scale,
+bleed, and color management. Worth it for the multi-tenant product;
+not worth blocking Casino Pier on.
 
 ## Prerequisites
 
