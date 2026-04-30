@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capability granted to the agent's main window. Just enough to invoke our own Rust commands and use the autostart / OS / shell plugins. Nothing here grants filesystem or network access — that's all on the Rust side and bound to localhost.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "autostart:default",
+    "os:default",
+    "shell:default"
+  ]
+}
