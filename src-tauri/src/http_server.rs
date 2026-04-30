@@ -4,11 +4,18 @@
 //
 // API:
 //
-//   GET  /health                  -> { ok: true, version, listening }
+//   GET  /health                  -> { ok, version, listening, hostname,
+//                                       platform, helperInstalled,
+//                                       defaultPrinter, printers, agentId }
+//                                    The web app calls this on page load to
+//                                    decide whether to route prints through
+//                                    the agent and to render the printer
+//                                    picker / status UI.
+//
 //   POST /print                   -> body = PDF bytes (Content-Type: application/pdf)
 //                                    query = ?printer=<name>   (optional, defaults to OS default)
 //                                    query = ?job_name=<name>  (optional, shows in spooler UI)
-//                                    response = { ok: true, printer, job_name } on success
+//                                    response = { ok, printer, job_name } on success
 //
 // CORS is wide-open for localhost/127.0.0.1 origins so the web app
 // (running anywhere) can POST to the agent. In v2 we replace this
@@ -92,17 +99,62 @@ struct PrintEvent {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct HealthResponse {
     ok: bool,
     version: &'static str,
     listening: bool,
+    /// Human-readable computer name. Drives the agent's display name
+    /// in the web app's settings → Printers → Agents view (e.g.
+    /// "Casino Pier — DESKTOP-3F8K2L1").
+    hostname: String,
+    /// "windows" / "macos" / "linux" — surfaces the host OS so the
+    /// settings UI can show a small platform badge per agent.
+    platform: &'static str,
+    /// Stable per-machine identifier for showing/grouping the agent
+    /// in the web app even across hostname changes. Random + cached
+    /// in OS-appropriate config dir on first run; here we settle for
+    /// hostname so v1 doesn't need filesystem persistence.
+    agent_id: String,
+    /// Whether the SumatraPDF (Windows) / `lp` (mac/linux) helper is
+    /// available. Drives the "PDF helper missing" warning in the
+    /// agent picker UI.
+    helper_installed: bool,
+    /// OS default printer, if set.
+    default_printer: Option<String>,
+    /// Every printer the agent can see.
+    printers: Vec<String>,
 }
 
 async fn health() -> impl IntoResponse {
+    let hostname = std::env::var("COMPUTERNAME") // Windows
+        .or_else(|_| std::env::var("HOSTNAME")) // most Unix shells
+        .or_else(|_| {
+            // Fallback for macOS where neither is set in the
+            // environment by default.
+            std::process::Command::new("hostname")
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .map_err(|_| std::env::VarError::NotPresent)
+        })
+        .unwrap_or_else(|_| "unknown".to_string());
+
     Json(HealthResponse {
         ok: true,
         version: env!("CARGO_PKG_VERSION"),
         listening: true,
+        platform: if cfg!(target_os = "windows") {
+            "windows"
+        } else if cfg!(target_os = "macos") {
+            "macos"
+        } else {
+            "linux"
+        },
+        agent_id: hostname.clone(),
+        hostname,
+        helper_installed: printer::helper_installed(),
+        default_printer: printer::default_printer().ok().flatten(),
+        printers: printer::list_printers().unwrap_or_default(),
     })
 }
 
