@@ -158,19 +158,12 @@ export function UpdateBanner({ state, onInstall }: Props) {
     );
   }
 
-  if (state.status === "error") {
-    return (
-      <section className="update-banner update-banner--error" role="status">
-        <div className="update-banner__icon" aria-hidden>
-          <ZapIcon size={16} />
-        </div>
-        <div className="update-banner__copy">
-          <p className="update-banner__title">Update check failed</p>
-          <p className="update-banner__body">{truncate(state.message, 200)}</p>
-        </div>
-      </section>
-    );
-  }
+  // Errors are intentionally not rendered here. The first time the
+  // agent runs against a fresh repo (before any release has been
+  // published) the manifest URL 404s — we don't want operators to
+  // see an alarming red banner for an infrastructure state they
+  // can't act on. Errors stay visible in SettingsCard's "Updates"
+  // row text (and in tracing logs) so IT / developers can debug.
 
   return null;
 }
