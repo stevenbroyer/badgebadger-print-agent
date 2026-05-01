@@ -8,6 +8,7 @@ import { PrinterCard } from "./components/PrinterCard";
 import { ActivityCard } from "./components/ActivityCard";
 import { SettingsCard } from "./components/SettingsCard";
 import { Toaster, useToast } from "./components/Toaster";
+import { UpdateBanner, useUpdater } from "./components/UpdateBanner";
 import type { AgentStatus, PrintEvent, ActivityItem } from "./types";
 
 export default function App() {
@@ -16,6 +17,7 @@ export default function App() {
   const [testing, setTesting] = useState(false);
   const [selectedPrinter, setSelectedPrinter] = useState<string | null>(null);
   const toast = useToast();
+  const updater = useUpdater();
 
   // Poll status. Cheap (just a Tauri command, no IPC heavy lifting),
   // and 1s is fast enough that printer add/remove from the OS is
@@ -161,6 +163,8 @@ export default function App() {
         port={status?.listenerPort ?? null}
       />
 
+      <UpdateBanner state={updater.state} onInstall={updater.install} />
+
       {!allReady && status ? (
         <ChecklistCard items={checklist} />
       ) : null}
@@ -181,6 +185,8 @@ export default function App() {
       <SettingsCard
         port={status?.listenerPort ?? null}
         listening={status?.listening ?? false}
+        updaterState={updater.state}
+        onCheckForUpdates={() => void updater.runCheck()}
       />
 
       <footer className="footer">

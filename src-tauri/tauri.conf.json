@@ -47,5 +47,13 @@
     "category": "Utility",
     "shortDescription": "Local print agent for BadgeBadger",
     "longDescription": "Listens for print jobs from the BadgeBadger web app and dispatches them silently to your local printer. Ships SumatraPDF (GPLv3) as a bundled helper so single-MSI installs work without a separate PDF reader."
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/stevenbroyer/badgebadger-print-agent/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM4NzRCQTc0QzIxNkI4RTMKUldUanVCYkNkTHAweU1abzRsTEpaS1UzRTZTNVBWSFFxUjF5RlIvMHg1RzlMMW9nbTZlejB4VHEK"
+    }
   }
 }

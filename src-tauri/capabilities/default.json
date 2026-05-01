@@ -7,6 +7,8 @@
     "core:default",
     "autostart:default",
     "os:default",
-    "shell:default"
+    "process:default",
+    "shell:default",
+    "updater:default"
   ]
 }

@@ -92,6 +92,63 @@ Produces an unsigned `.msi` in `src-tauri/target/release/bundle/msi/`. For
 production we'll add code signing (DigiCert EV cert) so SmartScreen
 trusts the installer.
 
+## Release process & auto-update
+
+Once an operator has v0.1.0+ installed, every subsequent release reaches
+their machine automatically. The agent checks
+`https://github.com/stevenbroyer/badgebadger-print-agent/releases/latest/download/latest.json`
+on startup and every 6 hours; when a newer version is found, an amber
+"Update available" banner appears in the agent UI with a single
+"Restart now" button. Operators don't have to download anything by
+hand. The pairing token at `%LOCALAPPDATA%\com.badgebadger.printagent\token`
+survives updates because it lives outside the install dir.
+
+### Cutting a release
+
+1. Bump the version in three places (must match exactly):
+   - `package.json` → `version`
+   - `src-tauri/Cargo.toml` → `[package].version`
+   - `src-tauri/tauri.conf.json` → `version`
+2. Update `CHANGELOG.md` (or in-line release notes) with what changed.
+3. Tag and push:
+   ```sh
+   git tag v0.2.0
+   git push origin v0.2.0
+   ```
+4. Done. `.github/workflows/release.yml` runs on `windows-latest`,
+   fetches SumatraPDF, builds the MSI + NSIS installer, signs the
+   update bundle with the Tauri updater key, and publishes them as a
+   GitHub Release alongside `latest.json`. Already-installed agents
+   pick it up within 6 h.
+
+### Updater signing key
+
+Updates are verified against an Ed25519 public key embedded in the
+agent at build time (`tauri.conf.json` → `plugins.updater.pubkey`).
+This is **separate from Windows code signing** — it's a free,
+Tauri-specific signature that proves the update came from this
+build pipeline. Without a valid signature, the agent refuses to
+install the update.
+
+The key was generated once with `pnpm tauri signer generate -w
+~/.tauri/badgebadger.key`. The private half is stored as two GitHub
+repository secrets:
+
+- `TAURI_SIGNING_PRIVATE_KEY` — full contents of the `.key` file.
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — empty for the current key
+  (set to a passphrase if rotating; bump the public key in
+  `tauri.conf.json` and ship a manual MSI to bridge agents over).
+
+**Lose the private key and updates stop working** until you rotate
+the public key and ship a manual install of the new version.
+
+### Code signing (still TODO)
+
+The MSI itself isn't yet signed with an Authenticode cert; first-time
+installs trigger SmartScreen. Adding a DigiCert EV cert is the
+remaining money-and-paperwork item — track in the v3 roadmap row
+below.
+
 ## Security model (v1)
 
 - **Loopback only**: the listener binds `127.0.0.1:9988`. Nothing on
@@ -144,5 +201,5 @@ curl -X POST 'http://localhost:9988/print?printer=Fargo%20HDP5000' \
 | --- | --- |
 | **v1 (this repo)** | Local HTTP listener, system tray, Windows print integration. No pairing, no cloud. Operator can test print via curl. |
 | v2 | Pair via 6-digit code with `https://app.badgebadger.com/api/agent/pair`. Persistent WebSocket from agent → server. Server routes print jobs over WS to the right tenant's agent. |
-| v3 | Code signing (DigiCert / Apple Developer ID), auto-update via Tauri's built-in updater, install page on the marketing site. |
+| v3 | Code signing (DigiCert / Apple Developer ID), install page on the marketing site. (Auto-update shipped in v1 — see "Release process & auto-update" above.) |
 | v4 | Multiple printer profiles per agent, encoding (magstripe, RFID) integration, queue status reporting back to the web app. |

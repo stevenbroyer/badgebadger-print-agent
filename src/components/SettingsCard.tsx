@@ -5,10 +5,21 @@ import {
   isEnabled as isAutostartEnabled,
 } from "@tauri-apps/plugin-autostart";
 import { CopyIcon, CheckIcon } from "./icons";
+import type { UpdaterState } from "./UpdateBanner";
 
-type Props = { port: number | null; listening: boolean };
+type Props = {
+  port: number | null;
+  listening: boolean;
+  updaterState: UpdaterState;
+  onCheckForUpdates: () => void;
+};
 
-export function SettingsCard({ port, listening }: Props) {
+export function SettingsCard({
+  port,
+  listening,
+  updaterState,
+  onCheckForUpdates,
+}: Props) {
   const [autostart, setAutostart] = useState<boolean | null>(null);
   const [pending, setPending] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -104,7 +115,53 @@ export function SettingsCard({ port, listening }: Props) {
             </span>
           </button>
         </div>
+
+        <div className="settings__row">
+          <div>
+            <p className="settings__label">Updates</p>
+            <p className="settings__help">
+              {updaterStatusText(updaterState)}
+            </p>
+          </div>
+          <button
+            type="button"
+            className="btn btn--ghost"
+            onClick={onCheckForUpdates}
+            disabled={
+              updaterState.status === "checking" ||
+              updaterState.status === "downloading"
+            }
+          >
+            {updaterState.status === "checking" ? "Checking…" : "Check now"}
+          </button>
+        </div>
       </div>
     </section>
   );
+}
+
+function updaterStatusText(state: UpdaterState): string {
+  switch (state.status) {
+    case "idle":
+      return "Auto-checks every 6 hours. Trigger one manually here.";
+    case "checking":
+      return "Talking to the BadgeBadger release server…";
+    case "up-to-date":
+      return `You're on the latest version (checked ${formatRelative(state.checkedAt)}).`;
+    case "available":
+      return `v${state.update.version} is ready — see the banner above.`;
+    case "downloading":
+      return `Installing v${state.update.version}…`;
+    case "error":
+      return `Last check failed: ${state.message.slice(0, 120)}`;
+  }
+}
+
+function formatRelative(epochMs: number): string {
+  const diff = Date.now() - epochMs;
+  if (diff < 60_000) return "just now";
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  return `${hours}h ago`;
 }
