@@ -154,8 +154,9 @@ below.
 - **Loopback only**: the listener binds `127.0.0.1:9988`. Nothing on
   the LAN can reach it.
 - **CORS allowlist**: requests must come from one of the BadgeBadger
-  origins (`https://ids.postudios.io`, `https://app.badgebadger.com`,
-  `http://localhost:3000`). Override via `BADGEBADGER_AGENT_ORIGINS`.
+  origins (`https://hq.badgebadger.app`, `https://badgebadger.app`,
+  `https://ids.postudios.io`, `http://localhost:3000`). Override via
+  `BADGEBADGER_AGENT_ORIGINS`.
   v0 used wide-open `Any` — a tab on any visited site could drive the
   printer.
 - **Per-install bearer token**: random 256-bit hex, generated on
@@ -200,6 +201,6 @@ curl -X POST 'http://localhost:9988/print?printer=Fargo%20HDP5000' \
 | Phase | Scope |
 | --- | --- |
 | **v1 (this repo)** | Local HTTP listener, system tray, Windows print integration. No pairing, no cloud. Operator can test print via curl. |
-| v2 | Pair via 6-digit code with `https://app.badgebadger.com/api/agent/pair`. Persistent WebSocket from agent → server. Server routes print jobs over WS to the right tenant's agent. |
+| v2 | Pair via 6-digit code with `https://hq.badgebadger.app/api/agent/pair`. Persistent WebSocket from agent → server. Server routes print jobs over WS to the right tenant's agent. |
 | v3 | Code signing (DigiCert / Apple Developer ID), install page on the marketing site. (Auto-update shipped in v1 — see "Release process & auto-update" above.) |
 | v4 | Multiple printer profiles per agent, encoding (magstripe, RFID) integration, queue status reporting back to the web app. |

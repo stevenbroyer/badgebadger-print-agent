@@ -72,9 +72,9 @@ const MAX_BODY_BYTES: usize = 25 * 1024 * 1024;
 // Production hosts + localhost dev. Anyone running their own deployment
 // adds theirs via the env var.
 const DEFAULT_ORIGINS: &[&str] = &[
+    "https://hq.badgebadger.app",
+    "https://badgebadger.app",
     "https://ids.postudios.io",
-    "https://app.badgebadger.com",
-    "https://www.badgebadger.com",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
 ];

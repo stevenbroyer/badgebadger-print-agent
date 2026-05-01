@@ -193,7 +193,7 @@ export default function App() {
         <span>BadgeBadger Print Agent · v{__APP_VERSION__}</span>
         <span aria-hidden>·</span>
         <a
-          href="https://app.badgebadger.com/help/print-agent"
+          href="https://hq.badgebadger.app/help/print-agent"
           target="_blank"
           rel="noopener noreferrer"
         >
