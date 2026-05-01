@@ -19,14 +19,29 @@ live on the existing browser-print flow.
 - **axum** — local HTTP listener.
 - **windows-rs + SumatraPDF (runtime dep)** — see Windows Printing below.
 
-## Windows printing requires SumatraPDF (v1)
+## Windows printing uses bundled SumatraPDF
 
 The agent dispatches PDFs to a named printer queue by shelling out to
-**SumatraPDF**. Operators have to install it once per workstation:
-<https://www.sumatrapdfreader.org/download-free-pdf-viewer> (free,
-GPLv3, ~6 MB single MSI). The agent UI surfaces this as a setup
-checklist item — green when SumatraPDF is detected on PATH or in any
-of the standard install dirs (`C:\Program Files\SumatraPDF\`, `C:\Program Files (x86)\SumatraPDF\`, `%LOCALAPPDATA%\SumatraPDF\`).
+**SumatraPDF** (free, GPLv3, ~6 MB). The MSI ships SumatraPDF.exe as
+a Tauri resource so single-MSI installs work without any second
+download — `find_sumatra()` probes the install dir first, then falls
+back to PATH / Program Files / `%LOCALAPPDATA%\SumatraPDF\` for
+operators who installed SumatraPDF separately.
+
+Before building the MSI, fetch the bundled binary:
+
+```sh
+# macOS / Linux build host
+./scripts/fetch-sumatra.sh
+# Windows build host
+pwsh ./scripts/fetch-sumatra.ps1
+```
+
+The script downloads SumatraPDF.exe into `src-tauri/resources/`
+(gitignored). The license + source pointer live in
+`src-tauri/resources/SumatraPDF-{LICENSE,NOTICE}.txt` so the MSI
+satisfies the GPLv3 redistribution requirements as "mere
+aggregation" — the two programs run as separate processes.
 
 **Why not just use Edge / `printto`?** Microsoft Edge is the default
 PDF handler on stock Win10/11 and **does not implement the `printto`
@@ -77,20 +92,50 @@ Produces an unsigned `.msi` in `src-tauri/target/release/bundle/msi/`. For
 production we'll add code signing (DigiCert EV cert) so SmartScreen
 trusts the installer.
 
+## Security model (v1)
+
+- **Loopback only**: the listener binds `127.0.0.1:9988`. Nothing on
+  the LAN can reach it.
+- **CORS allowlist**: requests must come from one of the BadgeBadger
+  origins (`https://ids.postudios.io`, `https://app.badgebadger.com`,
+  `http://localhost:3000`). Override via `BADGEBADGER_AGENT_ORIGINS`.
+  v0 used wide-open `Any` — a tab on any visited site could drive the
+  printer.
+- **Per-install bearer token**: random 256-bit hex, generated on
+  first run and persisted at the OS app-data dir
+  (`%LOCALAPPDATA%\com.badgebadger.printagent\token` /
+  `~/Library/Application Support/com.badgebadger.printagent/token`,
+  mode 0600 on unix). The agent UI shows it under "Pair with
+  BadgeBadger"; the operator pastes it into the web app once.
+  `/print` requires `Authorization: Bearer <token>`; `/health` stays
+  unauthenticated so the web app can probe presence.
+- **Origin pinning**: `/print` rejects requests with no `Origin`
+  header or one outside the allowlist (defence in depth — closes
+  curl-from-malware drive-by where the browser's own CORS check
+  doesn't fire).
+- **Rate limit**: token-bucket on `/print`, 60/min steady, burst 20.
+
 ## Test print without the web app
 
-While the agent is running:
+The new auth makes raw curl harder; this is the v1 incantation:
 
 ```sh
-curl -X POST http://localhost:9988/print --data-binary "@badge.pdf" -H "Content-Type: application/pdf"
+TOKEN=$(cat "$HOME/Library/Application Support/com.badgebadger.printagent/token")
+curl -X POST http://localhost:9988/print \
+  --data-binary "@badge.pdf" \
+  -H "Content-Type: application/pdf" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Origin: http://localhost:3000"
 ```
 
-The agent saves the PDF to a temp file and shells out to the OS default
-PDF handler with the `printto` verb pointed at the OS default printer.
 Override the printer with `?printer=<queue-name>`:
 
 ```sh
-curl -X POST 'http://localhost:9988/print?printer=Fargo%20HDP5000' --data-binary "@badge.pdf" -H "Content-Type: application/pdf"
+curl -X POST 'http://localhost:9988/print?printer=Fargo%20HDP5000' \
+  --data-binary "@badge.pdf" \
+  -H "Content-Type: application/pdf" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Origin: http://localhost:3000"
 ```
 
 ## Roadmap

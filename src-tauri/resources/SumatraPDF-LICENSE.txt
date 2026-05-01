@@ -1,0 +1,18 @@
+SumatraPDF is distributed under the GNU General Public License v3.
+
+The unmodified license text is available at:
+
+  https://www.gnu.org/licenses/gpl-3.0.txt
+
+The exact LICENSE file shipped with the SumatraPDF release we
+bundle is included in the SumatraPDF distribution at:
+
+  https://github.com/sumatrapdfreader/sumatrapdf/blob/master/LICENSE
+
+When updating the bundled SumatraPDF.exe, replace this file with
+the matching LICENSE text from the upstream release to keep the
+notice current.
+
+BadgeBadger Print Agent itself is licensed separately and only
+aggregates SumatraPDF as a helper binary — the two programs run
+as separate processes and do not share an address space.

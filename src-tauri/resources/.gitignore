@@ -1,0 +1,5 @@
+# SumatraPDF.exe is fetched at build time by scripts/fetch-sumatra.{sh,ps1}.
+# Skipping it from version control keeps the repo lean (the binary is
+# 6 MB and would dominate `git clone` time).
+SumatraPDF.exe
+SumatraPDF*.exe

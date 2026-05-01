@@ -36,6 +36,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "resources": [
+      "resources/*"
+    ],
     "windows": {
       "wix": {
         "language": "en-US"
@@ -43,6 +46,6 @@
     },
     "category": "Utility",
     "shortDescription": "Local print agent for BadgeBadger",
-    "longDescription": "Listens for print jobs from the BadgeBadger web app and dispatches them silently to your local printer."
+    "longDescription": "Listens for print jobs from the BadgeBadger web app and dispatches them silently to your local printer. Ships SumatraPDF (GPLv3) as a bundled helper so single-MSI installs work without a separate PDF reader."
   }
 }

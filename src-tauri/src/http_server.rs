@@ -2,20 +2,38 @@
 // web app on the same machine and dispatches to the printer. The
 // listener binds to 127.0.0.1 only so it's never exposed to the LAN.
 //
+// Security model (v1):
+//
+// 1. Bind to loopback. Nothing on the LAN can reach us.
+// 2. CORS is an explicit allowlist of badgebadger origins (env-overridable
+//    via BADGEBADGER_AGENT_ORIGINS). Replaces the v0 wide-open allow_origin(Any)
+//    that let any tab the operator visited drive the printer.
+// 3. /print requires `Authorization: Bearer <token>`. Token is per-install
+//    random 256-bit hex, persisted in the OS app-data dir, surfaced via
+//    the agent UI's "Pair with web app" button. Web pastes it once.
+// 4. /print rejects requests without an `Origin` header in the allowlist.
+//    Closes off curl-from-malware drive-by where CORS isn't enforced
+//    by a browser.
+// 5. /print is rate-limited (60/min steady, burst 20). Caps a hostile or
+//    runaway tab without affecting realistic bulk prints.
+// 6. /health stays unauthenticated so the web app can probe agent presence
+//    before pairing. The endpoint discloses hostname + printer list, both
+//    already visible to anyone with shell access.
+//
 // API:
 //
-//   GET  /health                  -> { ok, version, listening, hostname,
-//                                       platform, helperInstalled,
-//                                       defaultPrinter, printers, agentId }
-//                                    The web app calls this on page load to
-//                                    decide whether to route prints through
-//                                    the agent and to render the printer
-//                                    picker / status UI.
+//   GET  /health  -> { ok, version, listening, hostname, platform,
+//                      helperInstalled, defaultPrinter, printers, agentId,
+//                      authRequired }
+//                    The web app calls this on page load to decide whether
+//                    to route prints through the agent and to render the
+//                    printer picker / status UI.
 //
-//   POST /print                   -> body = PDF bytes (Content-Type: application/pdf)
-//                                    query = ?printer=<name>   (optional, defaults to OS default)
-//                                    query = ?job_name=<name>  (optional, shows in spooler UI)
-//                                    response = { ok, printer, job_name } on success
+//   POST /print   -> body = PDF bytes (Content-Type: application/pdf)
+//                    headers = Authorization: Bearer <token>
+//                    query = ?printer=<name>   (optional)
+//                    query = ?job_name=<name>  (optional)
+//                    response = { ok, printer, job_name } on success
 //
 // CORS is wide-open for localhost/127.0.0.1 origins so the web app
 // (running anywhere) can POST to the agent. In v2 we replace this
@@ -27,18 +45,21 @@ use std::sync::Arc;
 
 use axum::{
     Router,
-    extract::{Query, State},
-    http::{HeaderMap, StatusCode, header},
-    response::{IntoResponse, Json},
+    extract::{Query, Request, State},
+    http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, header},
+    middleware::{self, Next},
+    response::{IntoResponse, Json, Response},
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 use tokio::sync::Mutex;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::CorsLayer;
 use tower_http::limit::RequestBodyLimitLayer;
 
+use crate::auth;
 use crate::printer;
+use crate::rate_limit::RateLimiter;
 
 pub const DEFAULT_PORT: u16 = 9988;
 
@@ -47,22 +68,52 @@ pub const DEFAULT_PORT: u16 = 9988;
 // keep an erroneous client from filling memory with a hostile body.
 const MAX_BODY_BYTES: usize = 25 * 1024 * 1024;
 
+// Default origin allowlist when BADGEBADGER_AGENT_ORIGINS isn't set.
+// Production hosts + localhost dev. Anyone running their own deployment
+// adds theirs via the env var.
+const DEFAULT_ORIGINS: &[&str] = &[
+    "https://ids.postudios.io",
+    "https://app.badgebadger.com",
+    "https://www.badgebadger.com",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+];
+
 pub async fn serve(
     port: u16,
     state: Arc<Mutex<crate::AgentState>>,
     app: tauri::AppHandle,
+    pairing_token: String,
 ) -> anyhow::Result<()> {
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+    let allowed_origins = resolve_allowed_origins();
+    let cors = build_cors_layer(&allowed_origins);
 
-    let router = Router::new()
-        .route("/health", get(health))
+    let ctx = AgentCtx {
+        app,
+        pairing_token: Arc::new(pairing_token),
+        allowed_origins: Arc::new(allowed_origins),
+        rate_limiter: Arc::new(RateLimiter::new()),
+    };
+
+    // /print sits behind origin + auth + rate-limit middleware.
+    // /health is unauth so the web app can detect our presence before
+    // the operator pastes the token. Both routers share AgentCtx via
+    // with_state at the bottom of the chain.
+    let protected: Router<AgentCtx> = Router::new()
         .route("/print", post(print_handler))
+        .route_layer(middleware::from_fn_with_state(ctx.clone(), require_origin))
+        .route_layer(middleware::from_fn_with_state(ctx.clone(), require_auth))
+        .route_layer(middleware::from_fn_with_state(
+            ctx.clone(),
+            check_rate_limit,
+        ));
+    let public: Router<AgentCtx> = Router::new().route("/health", get(health));
+
+    let router = public
+        .merge(protected)
         .layer(RequestBodyLimitLayer::new(MAX_BODY_BYTES))
         .layer(cors)
-        .with_state(AgentCtx { app });
+        .with_state(ctx);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -84,7 +135,103 @@ pub async fn serve(
 #[derive(Clone)]
 struct AgentCtx {
     app: tauri::AppHandle,
+    pairing_token: Arc<String>,
+    allowed_origins: Arc<Vec<String>>,
+    rate_limiter: Arc<RateLimiter>,
 }
+
+fn resolve_allowed_origins() -> Vec<String> {
+    if let Ok(raw) = std::env::var("BADGEBADGER_AGENT_ORIGINS") {
+        let custom: Vec<String> = raw
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if !custom.is_empty() {
+            tracing::info!(
+                count = custom.len(),
+                "using BADGEBADGER_AGENT_ORIGINS allowlist"
+            );
+            return custom;
+        }
+    }
+    DEFAULT_ORIGINS.iter().map(|s| s.to_string()).collect()
+}
+
+fn build_cors_layer(origins: &[String]) -> CorsLayer {
+    let header_values: Vec<HeaderValue> = origins
+        .iter()
+        .filter_map(|o| HeaderValue::from_str(o).ok())
+        .collect();
+    CorsLayer::new()
+        .allow_origin(header_values)
+        .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+        .allow_headers([
+            header::CONTENT_TYPE,
+            header::AUTHORIZATION,
+            HeaderName::from_static("x-agent-mode"),
+        ])
+}
+
+// ──────────────────────── middleware ────────────────────────
+
+async fn require_origin(
+    State(ctx): State<AgentCtx>,
+    headers: HeaderMap,
+    req: Request,
+    next: Next,
+) -> Result<Response, (StatusCode, String)> {
+    let origin = headers
+        .get(header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    if origin.is_empty() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Origin header required for /print".to_string(),
+        ));
+    }
+    if !ctx.allowed_origins.iter().any(|a| a.as_str() == origin) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            format!("Origin '{origin}' not allowed"),
+        ));
+    }
+    Ok(next.run(req).await)
+}
+
+async fn require_auth(
+    State(ctx): State<AgentCtx>,
+    headers: HeaderMap,
+    req: Request,
+    next: Next,
+) -> Result<Response, (StatusCode, &'static str)> {
+    let header = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let provided = header.strip_prefix("Bearer ").unwrap_or("").trim();
+    if provided.is_empty() {
+        return Err((StatusCode::UNAUTHORIZED, "missing bearer token"));
+    }
+    if !auth::constant_time_eq(provided.as_bytes(), ctx.pairing_token.as_bytes()) {
+        return Err((StatusCode::UNAUTHORIZED, "invalid bearer token"));
+    }
+    Ok(next.run(req).await)
+}
+
+async fn check_rate_limit(
+    State(ctx): State<AgentCtx>,
+    req: Request,
+    next: Next,
+) -> Result<Response, (StatusCode, &'static str)> {
+    if !ctx.rate_limiter.check() {
+        return Err((StatusCode::TOO_MANY_REQUESTS, "rate limit exceeded"));
+    }
+    Ok(next.run(req).await)
+}
+
+// ──────────────────────── handlers ────────────────────────
 
 // Payload emitted to the React frontend after every print attempt.
 // Drives the activity feed + toast notifications in the agent UI.
@@ -124,6 +271,14 @@ struct HealthResponse {
     default_printer: Option<String>,
     /// Every printer the agent can see.
     printers: Vec<String>,
+    /// Always true on agent versions ≥ 0.2 — tells the web app to
+    /// require an Authorization header. Older agents don't ship this
+    /// field; the web app treats absence as "auth not required" so
+    /// upgrades don't break.
+    auth_required: bool,
+    /// Protocol version. v1 = CORS allowlist + bearer token. Web
+    /// reads this to gate per-card POST + retry features.
+    protocol: &'static str,
 }
 
 async fn health() -> impl IntoResponse {
@@ -155,6 +310,8 @@ async fn health() -> impl IntoResponse {
         helper_installed: printer::helper_installed(),
         default_printer: printer::default_printer().ok().flatten(),
         printers: printer::list_printers().unwrap_or_default(),
+        auth_required: true,
+        protocol: "1",
     })
 }
 

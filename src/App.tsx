@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { StatusHero } from "./components/StatusHero";
 import { ChecklistCard } from "./components/ChecklistCard";
+import { PairingCard } from "./components/PairingCard";
 import { PrinterCard } from "./components/PrinterCard";
 import { ActivityCard } from "./components/ActivityCard";
 import { SettingsCard } from "./components/SettingsCard";
@@ -163,6 +164,8 @@ export default function App() {
       {!allReady && status ? (
         <ChecklistCard items={checklist} />
       ) : null}
+
+      <PairingCard ready={!!status?.listening} />
 
       <PrinterCard
         printers={status?.printers ?? []}

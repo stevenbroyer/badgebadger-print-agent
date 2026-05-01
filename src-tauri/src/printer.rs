@@ -116,14 +116,33 @@ mod windows_printer {
         }
     }
 
-    /// Locate SumatraPDF on the host. Tries PATH first (most
-    /// portable; users who installed via Chocolatey / Scoop end up
-    /// here), then a handful of common install locations the
-    /// official MSI / portable distribution writes to. Returns None
-    /// when SumatraPDF isn't installed; the caller falls back to
-    /// ShellExecute("printto").
+    /// Locate SumatraPDF on the host. Lookup order:
+    ///   1. Bundled alongside the agent EXE — when the MSI ships
+    ///      SumatraPDF as a Tauri resource it lands here. Single-MSI
+    ///      installs hit this branch and never need an external
+    ///      install.
+    ///   2. PATH (Chocolatey, Scoop, manual installs).
+    ///   3. Common install locations the official MSI / portable
+    ///      distribution writes to.
+    ///   4. %LOCALAPPDATA%\SumatraPDF — user-local portable install.
+    /// Returns None when SumatraPDF isn't installed; the caller falls
+    /// back to ShellExecute("printto") with a clear error.
     pub fn find_sumatra() -> Option<std::path::PathBuf> {
         use std::path::Path;
+        // Bundled-resource probe: next to our own exe, then in a
+        // `resources/` subdir (Tauri's bundle.resources lands here).
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                for candidate in [
+                    dir.join("SumatraPDF.exe"),
+                    dir.join("resources").join("SumatraPDF.exe"),
+                ] {
+                    if candidate.is_file() {
+                        return Some(candidate);
+                    }
+                }
+            }
+        }
         // PATH lookup — works for portable installs the user dropped
         // somewhere reachable.
         if let Ok(path) = std::env::var("PATH") {
@@ -194,6 +213,23 @@ mod windows_printer {
         // a silent no-op on most untouched installs. Returns a
         // clear error to the caller in that case so the operator
         // sees an actionable message in the agent UI.
+        // The printto verb passes args as a single string to the
+        // registered PDF handler — we splice the printer name into
+        // a quoted argv slot, so any embedded `"`, `\`, or control
+        // character would let a hostile caller break out and append
+        // their own args. Reject those names rather than try to
+        // escape them. Realistic printer queue names don't contain
+        // these characters.
+        if printer_name.is_empty()
+            || printer_name
+                .chars()
+                .any(|c| c == '"' || c == '\\' || c.is_control())
+        {
+            return Err(anyhow!(
+                "printer name '{}' contains characters that aren't safe to pass to ShellExecute",
+                printer_name
+            ));
+        }
         let verb = HSTRING::from("printto");
         let file = HSTRING::from(path.to_string_lossy().as_ref());
         let args_str = format!(r#""{}""#, printer_name);

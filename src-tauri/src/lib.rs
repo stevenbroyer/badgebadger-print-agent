@@ -7,8 +7,10 @@
 // work in deployments where the operator's machine isn't on the
 // same network as the server.
 
+mod auth;
 mod http_server;
 mod printer;
+mod rate_limit;
 
 use std::sync::Arc;
 
@@ -42,6 +44,11 @@ pub struct AgentStatus {
 pub struct AgentState {
     pub listening: bool,
     pub listener_port: u16,
+    /// Pairing token. Empty until `setup` runs `auth::load_or_create_token`.
+    /// Surfaced to the React UI via the `get_pairing_token` Tauri command
+    /// so the operator can copy it into the BadgeBadger web app to
+    /// authorise this workstation.
+    pub pairing_token: String,
 }
 
 pub type SharedState = Arc<Mutex<AgentState>>;
@@ -59,6 +66,15 @@ async fn get_status(state: tauri::State<'_, SharedState>) -> Result<AgentStatus,
         printers,
         helper_installed,
     })
+}
+
+#[tauri::command]
+async fn get_pairing_token(state: tauri::State<'_, SharedState>) -> Result<String, String> {
+    let s = state.lock().await;
+    if s.pairing_token.is_empty() {
+        return Err("pairing token not yet loaded".into());
+    }
+    Ok(s.pairing_token.clone())
 }
 
 #[tauri::command]
@@ -239,15 +255,36 @@ pub fn run() {
             None,
         ))
         .manage(shared_state)
-        .invoke_handler(tauri::generate_handler![get_status, test_print])
+        .invoke_handler(tauri::generate_handler![
+            get_status,
+            get_pairing_token,
+            test_print
+        ])
         .setup(move |app| {
             let app_handle = app.handle().clone();
-            // Spawn the HTTP listener on the Tauri runtime so it
-            // shuts down cleanly when the app exits.
+            let token_state = listener_state.clone();
+            // Load (or generate) the pairing token, then start the
+            // HTTP listener with it. Both happen on the Tauri runtime
+            // so they shut down cleanly with the app.
             tauri::async_runtime::spawn(async move {
-                if let Err(err) =
-                    http_server::serve(http_server::DEFAULT_PORT, listener_state, app_handle)
-                        .await
+                let token = match auth::load_or_create_token(&app_handle).await {
+                    Ok(t) => t,
+                    Err(err) => {
+                        tracing::error!(?err, "could not load/create pairing token");
+                        return;
+                    }
+                };
+                {
+                    let mut s = token_state.lock().await;
+                    s.pairing_token = token.clone();
+                }
+                if let Err(err) = http_server::serve(
+                    http_server::DEFAULT_PORT,
+                    listener_state,
+                    app_handle,
+                    token,
+                )
+                .await
                 {
                     tracing::error!(?err, "http listener stopped");
                 }

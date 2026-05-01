@@ -1,0 +1,16 @@
+BadgeBadger Print Agent ships an unmodified copy of SumatraPDF, an
+open-source PDF reader for Windows authored by Krzysztof Kowalczyk
+and contributors.
+
+  Project home: https://www.sumatrapdfreader.org/
+  Source code:  https://github.com/sumatrapdfreader/sumatrapdf
+  License:      GNU General Public License, version 3
+
+The full license text is preserved in SumatraPDF-LICENSE.txt in this
+same directory. The unmodified SumatraPDF.exe is included in this
+installer as a separate program ("mere aggregation"); the agent
+invokes it as a child process and does not link against it.
+
+To replace or upgrade the bundled SumatraPDF, drop a fresh
+SumatraPDF.exe in this `resources/` directory before running
+`pnpm tauri build`. The build pipeline copies whatever is here.
