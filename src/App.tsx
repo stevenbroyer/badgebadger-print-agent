@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { open as openExternal } from "@tauri-apps/plugin-shell";
 import { StatusHero } from "./components/StatusHero";
+import { AutostartCallout } from "./components/AutostartCallout";
 import { ChecklistCard } from "./components/ChecklistCard";
 import { PairingCard } from "./components/PairingCard";
 import { PrinterCard } from "./components/PrinterCard";
@@ -147,13 +149,24 @@ export default function App() {
         <span className="brand-mark" aria-hidden>
           🦡
         </span>
-        <div>
+        <div className="header__title">
           <h1>BadgeBadger Print Agent</h1>
           <p className="subtitle">
             Quietly forwards badge prints from BadgeBadger to your local
             printer.
           </p>
         </div>
+        <button
+          type="button"
+          className="btn btn--primary header__cta"
+          onClick={() => {
+            void openExternal("https://hq.badgebadger.app").catch(() =>
+              undefined,
+            );
+          }}
+        >
+          Open BadgeBadger ↗
+        </button>
       </header>
 
       <StatusHero
@@ -164,6 +177,8 @@ export default function App() {
       />
 
       <UpdateBanner state={updater.state} onInstall={updater.install} />
+
+      <AutostartCallout />
 
       {!allReady && status ? (
         <ChecklistCard items={checklist} />
