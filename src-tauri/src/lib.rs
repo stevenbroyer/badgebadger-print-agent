@@ -20,7 +20,7 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Emitter, Manager, WindowEvent,
 };
-use tauri_plugin_autostart::MacosLauncher;
+use tauri_plugin_autostart::{ManagerExt, MacosLauncher};
 use tokio::sync::Mutex;
 
 #[derive(Debug, Clone, Serialize)]
@@ -129,6 +129,31 @@ struct LibPrintEvent<'a> {
     job_name: Option<&'a str>,
     ok: bool,
     error: Option<&'a str>,
+}
+
+// Best-effort default-enable autostart on the very first launch.
+// Writes a marker file so subsequent launches respect whatever the
+// user has toggled — we never re-enable behind a deliberate disable.
+fn ensure_autostart_default(app: &tauri::App) -> anyhow::Result<()> {
+    let data_dir = app
+        .handle()
+        .path()
+        .app_local_data_dir()
+        .map_err(|e| anyhow::anyhow!("no app-local data dir: {e}"))?;
+    std::fs::create_dir_all(&data_dir)?;
+    let marker = data_dir.join("autostart_initialized");
+    if marker.exists() {
+        return Ok(());
+    }
+    let autolaunch = app.handle().autolaunch();
+    if !autolaunch.is_enabled().unwrap_or(false) {
+        autolaunch
+            .enable()
+            .map_err(|e| anyhow::anyhow!("autolaunch enable failed: {e}"))?;
+        tracing::info!("enabled autostart on first run");
+    }
+    std::fs::write(&marker, "1")?;
+    Ok(())
 }
 
 fn emit_print(
@@ -265,6 +290,18 @@ pub fn run() {
         .setup(move |app| {
             let app_handle = app.handle().clone();
             let token_state = listener_state.clone();
+
+            // First-run autostart opt-in. Most operators want the agent
+            // to come up when they sit down in the morning; making them
+            // hunt for a toggle is friction. So on the very first launch
+            // we enable autostart automatically and drop a marker so we
+            // never re-enable behind a user who explicitly turned it off
+            // later. Best-effort — any failure (permission, registry
+            // glitch) leaves the existing manual toggle in the UI as
+            // the fallback path.
+            if let Err(err) = ensure_autostart_default(app) {
+                tracing::warn!(?err, "could not enable default autostart");
+            }
             // Load (or generate) the pairing token, then start the
             // HTTP listener with it. Both happen on the Tauri runtime
             // so they shut down cleanly with the app.
