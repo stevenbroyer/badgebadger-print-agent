@@ -277,6 +277,20 @@ a:hover {
   font-family: var(--font-sans);
 }
 
+.hero__meta {
+  margin: 8px 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+.hero__meta strong {
+  color: var(--fg);
+  font-weight: 600;
+}
+
 /* ─── Card primitive ──────────────────────────────────────────── */
 .card {
   border: 1px solid var(--border);

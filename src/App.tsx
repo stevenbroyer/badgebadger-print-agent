@@ -154,6 +154,25 @@ export default function App() {
 
   const allReady = checklist.every((c) => c.done);
 
+  // Derive a "Today: N badges" + "Last: Sam Rivera" chip from the
+  // activity ring buffer. We only count successful prints since
+  // midnight local time so failed dispatches don't inflate the
+  // number. The buffer caps at 25 entries — accurate for low-volume
+  // operators and a sensible cap for the rest until we add real
+  // persistence.
+  const printsToday = useMemo(() => {
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    return activity.filter(
+      (a) => a.ok && new Date(a.startedAt).getTime() >= start.getTime(),
+    ).length;
+  }, [activity]);
+  const lastPrintLabel = useMemo(() => {
+    const last = activity.find((a) => a.ok);
+    if (!last) return null;
+    return last.employeeName ?? last.jobName ?? null;
+  }, [activity]);
+
   return (
     <main className="shell">
       <header className="header">
@@ -185,6 +204,8 @@ export default function App() {
         listening={status?.listening ?? false}
         defaultPrinter={status?.defaultPrinter ?? null}
         port={status?.listenerPort ?? null}
+        printsToday={printsToday}
+        lastPrintLabel={lastPrintLabel}
       />
 
       <UpdateBanner state={updater.state} onInstall={updater.install} />

@@ -16,11 +16,12 @@ use std::sync::Arc;
 
 use serde::Serialize;
 use tauri::{
-    menu::{Menu, MenuItem},
+    menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Emitter, Manager, WindowEvent,
 };
 use tauri_plugin_autostart::{ManagerExt, MacosLauncher};
+use tauri_plugin_shell::ShellExt;
 use tokio::sync::Mutex;
 
 #[derive(Debug, Clone, Serialize)]
@@ -383,13 +384,25 @@ pub fn run() {
 
             // System tray. Keeps the agent reachable when the window is
             // hidden — left-click the tray icon reveals the window, the
-            // tray menu offers Open / Quit. The X button on the window
-            // hides instead of exits (see on_window_event below) so the
-            // agent stays running per the footer's promise.
+            // tray menu offers Open / Quit + a quick jump to the
+            // BadgeBadger web app. The X button on the window hides
+            // instead of exits (see on_window_event below) so the agent
+            // stays running per the footer's promise.
             let open_item =
-                MenuItem::with_id(app, "open", "Open BadgeBadger", true, None::<&str>)?;
+                MenuItem::with_id(app, "open", "Open agent window", true, None::<&str>)?;
+            let open_web_item = MenuItem::with_id(
+                app,
+                "open_web",
+                "Open BadgeBadger ↗",
+                true,
+                None::<&str>,
+            )?;
+            let sep1 = PredefinedMenuItem::separator(app)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&open_item, &quit_item])?;
+            let menu = Menu::with_items(
+                app,
+                &[&open_item, &open_web_item, &sep1, &quit_item],
+            )?;
 
             TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().unwrap().clone())
@@ -399,6 +412,11 @@ pub fn run() {
                 .on_menu_event(|app_handle, event| match event.id().as_ref() {
                     "quit" => app_handle.exit(0),
                     "open" => show_main_window(app_handle),
+                    "open_web" => {
+                        let url = std::env::var("BADGEBADGER_WEB_URL")
+                            .unwrap_or_else(|_| "https://hq.badgebadger.app".to_string());
+                        let _ = app_handle.shell().open(url, None);
+                    }
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {
