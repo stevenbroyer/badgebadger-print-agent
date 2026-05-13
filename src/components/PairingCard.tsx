@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { open as openExternal } from "@tauri-apps/plugin-shell";
 import { CheckIcon, CopyIcon } from "./icons";
 
 // Surfaces the agent's pairing token so the operator can paste it
@@ -49,54 +50,82 @@ export function PairingCard({ ready }: Props) {
     });
   }
 
+  async function openPairUrl() {
+    try {
+      const url = await invoke<string>("get_pair_url");
+      await openExternal(url);
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
   return (
     <section className="card">
       <div className="card__head">
         <h2 className="card__title">Pair with BadgeBadger</h2>
         <p className="card__subtitle">
-          Paste this token in the BadgeBadger web app at Settings →
-          Printers → Agents to authorise this computer. Once paired,
-          prints flow silently.
+          One-click pair: opens the BadgeBadger web app pre-filled
+          with this computer&rsquo;s identity — sign in (if you
+          aren&rsquo;t already) and confirm. The legacy paste-token
+          flow is below if your browser&rsquo;s on another machine.
         </p>
       </div>
 
-      <div className="pair">
-        <div
-          className={
-            revealed ? "pair__token pair__token--revealed" : "pair__token"
-          }
-          aria-label={revealed ? "Pairing token (revealed)" : "Pairing token (hidden)"}
+      <div className="pair__actions" style={{ marginBottom: 12 }}>
+        <button
+          type="button"
+          className="btn btn--primary"
+          onClick={() => void openPairUrl()}
+          disabled={!token}
         >
-          {token === null
-            ? error
-              ? "—"
-              : "Loading…"
-            : revealed
-              ? token
-              : "•".repeat(token.length)}
-        </div>
-        <div className="pair__actions">
-          <button
-            type="button"
-            className="btn btn--ghost"
-            onClick={() => setRevealed((v) => !v)}
-            disabled={!token}
-          >
-            {revealed ? "Hide" : "Reveal"}
-          </button>
-          <button
-            type="button"
-            className="btn btn--primary"
-            onClick={copyToken}
-            disabled={!token}
-          >
-            {copied ? <CheckIcon size={13} /> : <CopyIcon size={13} />}
-            {copied ? "Copied" : "Copy"}
-          </button>
-        </div>
+          Pair this computer ↗
+        </button>
       </div>
+
+      <details className="pair__advanced">
+        <summary>Use a different browser / manual paste</summary>
+        <div className="pair">
+          <div
+            className={
+              revealed ? "pair__token pair__token--revealed" : "pair__token"
+            }
+            aria-label={revealed ? "Pairing token (revealed)" : "Pairing token (hidden)"}
+          >
+            {token === null
+              ? error
+                ? "—"
+                : "Loading…"
+              : revealed
+                ? token
+                : "•".repeat(token.length)}
+          </div>
+          <div className="pair__actions">
+            <button
+              type="button"
+              className="btn btn--ghost"
+              onClick={() => setRevealed((v) => !v)}
+              disabled={!token}
+            >
+              {revealed ? "Hide" : "Reveal"}
+            </button>
+            <button
+              type="button"
+              className="btn btn--ghost"
+              onClick={copyToken}
+              disabled={!token}
+            >
+              {copied ? <CheckIcon size={13} /> : <CopyIcon size={13} />}
+              {copied ? "Copied" : "Copy"}
+            </button>
+          </div>
+          <p className="pair__hint">
+            Paste at <strong>Settings → Printers → Agents → Pair workstation</strong>.
+          </p>
+        </div>
+      </details>
+
       {error ? (
-        <p className="pair__error">Couldn't load the token: {error}</p>
+        <p className="pair__error">Couldn&rsquo;t load the token: {error}</p>
       ) : null}
     </section>
   );

@@ -77,6 +77,50 @@ async fn get_pairing_token(state: tauri::State<'_, SharedState>) -> Result<Strin
     Ok(s.pairing_token.clone())
 }
 
+// Build a one-click pair URL the operator's default browser can open.
+// Replaces the copy-token + paste-into-settings dance: we ship the
+// token, machine identity, and platform straight to the web app via
+// query params and let the user confirm with a single button. The web
+// route validates the token format + ensures the operator is signed
+// in before persisting the pairing server-side.
+#[tauri::command]
+async fn get_pair_url(state: tauri::State<'_, SharedState>) -> Result<String, String> {
+    let s = state.lock().await;
+    if s.pairing_token.is_empty() {
+        return Err("pairing token not yet loaded".into());
+    }
+    let token = s.pairing_token.clone();
+    drop(s);
+
+    let hostname = hostname::get()
+        .ok()
+        .and_then(|s| s.into_string().ok())
+        .unwrap_or_else(|| "this-computer".to_string());
+
+    let platform = if cfg!(target_os = "windows") {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else {
+        "linux"
+    };
+
+    // Default to the production host. Override via env for dev /
+    // staging so local builds can deep-link into a non-prod
+    // BadgeBadger instance without re-flashing the binary.
+    let base = std::env::var("BADGEBADGER_PAIR_URL")
+        .unwrap_or_else(|_| "https://hq.badgebadger.app/pair-agent".to_string());
+
+    let url = format!(
+        "{base}?token={token}&agent_id={host}&hostname={host}&label={host}&platform={platform}",
+        base = base,
+        token = urlencoding::encode(&token),
+        host = urlencoding::encode(&hostname),
+        platform = platform,
+    );
+    Ok(url)
+}
+
 #[tauri::command]
 async fn test_print(
     app: tauri::AppHandle,
@@ -285,6 +329,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_status,
             get_pairing_token,
+            get_pair_url,
             test_print
         ])
         .setup(move |app| {

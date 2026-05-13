@@ -32,6 +32,8 @@ tempfile = "3"
 anyhow = "1"
 once_cell = "1"
 getrandom = "0.2"
+hostname = "0.4"
+urlencoding = "2"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [
