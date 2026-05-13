@@ -14,10 +14,17 @@ export type AgentStatus = {
 // Emitted from Rust on the `print` Tauri event whenever a job is
 // dispatched (whether or not the dispatch itself succeeded). Drives
 // the activity feed + toast notifications.
+//
+// `employeeName` + `templateName` are populated when the web client
+// sends an X-Job-Meta header — gives the activity feed real "Sam
+// Rivera · Lifeguard 2026" rows instead of "badge-a1b2c3d4". When
+// absent the UI falls back to `jobName`.
 export type PrintEvent = {
   startedAt: string; // ISO timestamp
   printer: string;
   jobName: string | null;
+  employeeName: string | null;
+  templateName: string | null;
   ok: boolean;
   error: string | null;
 };
@@ -27,6 +34,8 @@ export type ActivityItem = {
   startedAt: string;
   printer: string;
   jobName: string | null;
+  employeeName: string | null;
+  templateName: string | null;
   ok: boolean;
   error: string | null;
 };

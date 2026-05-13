@@ -34,38 +34,51 @@ export function ActivityCard({ items }: Props) {
         </div>
       ) : (
         <ul className="activity-list">
-          {items.map((item) => (
-            <li
-              key={item.id}
-              className={
-                item.ok ? "activity-row ok" : "activity-row error"
-              }
-            >
-              <span className="activity-row__icon" aria-hidden>
-                {item.ok ? <CheckIcon size={14} /> : <XIcon size={14} />}
-              </span>
-              <div className="activity-row__copy">
-                <p className="activity-row__title">
-                  {item.jobName ?? "Print job"} —{" "}
-                  <span className="activity-row__printer">
-                    {item.printer}
-                  </span>
-                </p>
-                <p className="activity-row__detail">
-                  {item.ok
-                    ? `Sent ${formatRelative(item.startedAt)}`
-                    : item.error ?? "Unknown error"}
-                </p>
-              </div>
-              <time
-                className="activity-row__time"
-                dateTime={item.startedAt}
-                title={new Date(item.startedAt).toLocaleString()}
+          {items.map((item) => {
+            // Concierge-style label when the web client sent meta;
+            // fall back to the raw job_name for v0.2.x web clients.
+            const headline = item.employeeName
+              ? item.employeeName
+              : item.jobName ?? "Print job";
+            const subline = item.employeeName
+              ? [item.templateName, item.printer].filter(Boolean).join(" · ")
+              : item.printer;
+            return (
+              <li
+                key={item.id}
+                className={
+                  item.ok ? "activity-row ok" : "activity-row error"
+                }
               >
-                {formatRelative(item.startedAt)}
-              </time>
-            </li>
-          ))}
+                <span className="activity-row__icon" aria-hidden>
+                  {item.ok ? <CheckIcon size={14} /> : <XIcon size={14} />}
+                </span>
+                <div className="activity-row__copy">
+                  <p className="activity-row__title">
+                    {headline}
+                    {subline ? (
+                      <>
+                        {" — "}
+                        <span className="activity-row__printer">{subline}</span>
+                      </>
+                    ) : null}
+                  </p>
+                  <p className="activity-row__detail">
+                    {item.ok
+                      ? `Sent ${formatRelative(item.startedAt)}`
+                      : item.error ?? "Unknown error"}
+                  </p>
+                </div>
+                <time
+                  className="activity-row__time"
+                  dateTime={item.startedAt}
+                  title={new Date(item.startedAt).toLocaleString()}
+                >
+                  {formatRelative(item.startedAt)}
+                </time>
+              </li>
+            );
+          })}
         </ul>
       )}
     </section>

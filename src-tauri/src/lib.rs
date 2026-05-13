@@ -171,6 +171,11 @@ struct LibPrintEvent<'a> {
     started_at: &'a str,
     printer: &'a str,
     job_name: Option<&'a str>,
+    // Mirror the HTTP-server PrintEvent shape so the React UI doesn't
+    // have to special-case the test-print code path. Test prints don't
+    // come from the web client so these stay None.
+    employee_name: Option<&'a str>,
+    template_name: Option<&'a str>,
     ok: bool,
     error: Option<&'a str>,
 }
@@ -214,6 +219,8 @@ fn emit_print(
             started_at,
             printer,
             job_name,
+            employee_name: None,
+            template_name: None,
             ok,
             error,
         },

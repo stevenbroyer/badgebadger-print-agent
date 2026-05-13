@@ -55,15 +55,26 @@ export default function App() {
         startedAt: e.startedAt,
         printer: e.printer,
         jobName: e.jobName ?? null,
+        employeeName: e.employeeName ?? null,
+        templateName: e.templateName ?? null,
         ok: e.ok,
         error: e.error ?? null,
       };
       setActivity((prev) => [item, ...prev].slice(0, 25));
+      // Prefer the structured employee/template label when we have
+      // it; the toast feels much more like a concierge and less like
+      // a print queue ("Sam Rivera printed" vs "badge-a1b2c3d4").
+      const toastTitle = e.employeeName
+        ? `Printed ${e.employeeName}`
+        : "Sent to printer";
+      const toastBody = e.employeeName
+        ? `${e.templateName ? `${e.templateName} · ` : ""}${e.printer}`
+        : `${e.printer}${e.jobName ? ` · ${e.jobName}` : ""}`;
       if (e.ok) {
         toast.show({
           tone: "success",
-          title: "Sent to printer",
-          body: `${e.printer}${e.jobName ? ` · ${e.jobName}` : ""}`,
+          title: toastTitle,
+          body: toastBody,
         });
       } else {
         toast.show({

@@ -235,14 +235,35 @@ async fn check_rate_limit(
 
 // Payload emitted to the React frontend after every print attempt.
 // Drives the activity feed + toast notifications in the agent UI.
+//
+// `employee_name` + `template_name` are populated when the web client
+// sends an `X-Job-Meta` header alongside the PDF body. Older clients
+// don't send it and these fields stay None — the UI falls back to the
+// raw `job_name` for those, preserving v0.2.x behaviour.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PrintEvent {
     started_at: String,
     printer: String,
     job_name: Option<String>,
+    employee_name: Option<String>,
+    template_name: Option<String>,
     ok: bool,
     error: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct JobMeta {
+    employee_name: Option<String>,
+    template_name: Option<String>,
+}
+
+fn parse_job_meta(headers: &HeaderMap) -> JobMeta {
+    let raw = match headers.get("x-job-meta").and_then(|v| v.to_str().ok()) {
+        Some(s) => s,
+        None => return JobMeta::default(),
+    };
+    serde_json::from_str(raw).unwrap_or_default()
 }
 
 #[derive(Serialize)]
@@ -372,6 +393,7 @@ async fn print_handler(
             })?,
     };
 
+    let meta = parse_job_meta(&headers);
     let result = printer::print_pdf_bytes(&body, &printer_name).await;
 
     // Always emit a print event — success and failure both feed the
@@ -381,6 +403,8 @@ async fn print_handler(
         started_at,
         printer: printer_name.clone(),
         job_name: q.job_name.clone(),
+        employee_name: meta.employee_name,
+        template_name: meta.template_name,
         ok: result.is_ok(),
         error: result.as_ref().err().map(|e| e.to_string()),
     };
