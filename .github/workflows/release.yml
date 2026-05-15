@@ -89,10 +89,17 @@ jobs:
         run: |
           $version = $env:TAG -replace '^v', ''
           $bundleDir = "src-tauri/target/release/bundle/nsis"
-          $bundle = Get-ChildItem $bundleDir -Filter "*_${version}_x64-setup.nsis.zip" | Select-Object -First 1
-          $sigFile = Get-ChildItem $bundleDir -Filter "*_${version}_x64-setup.nsis.zip.sig" | Select-Object -First 1
+          # Use -like via Where-Object — `Get-ChildItem -Filter` uses the
+          # Windows file-system matcher which behaves unpredictably with
+          # filenames containing spaces (Tauri produces e.g.
+          # `BadgeBadger Print Agent_0.3.0_x64-setup.nsis.zip`).
+          $all = Get-ChildItem -Path $bundleDir -File -ErrorAction SilentlyContinue
+          $bundle = $all | Where-Object { $_.Name -like "*_${version}_x64-setup.nsis.zip" } | Select-Object -First 1
+          $sigFile = $all | Where-Object { $_.Name -like "*_${version}_x64-setup.nsis.zip.sig" } | Select-Object -First 1
           if (-not $bundle -or -not $sigFile) {
-            Write-Error "couldn't find bundle (.nsis.zip) and signature (.nsis.zip.sig) under $bundleDir"
+            Write-Host "files in $bundleDir:"
+            $all | ForEach-Object { Write-Host "  $($_.Name)" }
+            Write-Error "couldn't find bundle (.nsis.zip) and signature (.nsis.zip.sig)"
             exit 1
           }
           $signature = Get-Content -Raw $sigFile.FullName
