@@ -8,6 +8,7 @@
 // same network as the server.
 
 mod auth;
+mod cloud_dispatch;
 mod http_server;
 mod printer;
 mod rate_limit;
@@ -357,7 +358,10 @@ pub fn run() {
             }
             // Load (or generate) the pairing token, then start the
             // HTTP listener with it. Both happen on the Tauri runtime
-            // so they shut down cleanly with the app.
+            // so they shut down cleanly with the app. We also kick
+            // off the cloud-dispatch poll loop in parallel — the same
+            // token authenticates against /api/agent/jobs upstream so
+            // remote prints can land on this machine.
             tauri::async_runtime::spawn(async move {
                 let token = match auth::load_or_create_token(&app_handle).await {
                     Ok(t) => t,
@@ -370,6 +374,14 @@ pub fn run() {
                     let mut s = token_state.lock().await;
                     s.pairing_token = token.clone();
                 }
+                // Start the cross-device dispatch poller on its own
+                // task so a transient hiccup in the loop doesn't take
+                // down the HTTP listener (and vice versa).
+                let dispatch_handle = app_handle.clone();
+                let dispatch_token = token.clone();
+                tauri::async_runtime::spawn(async move {
+                    cloud_dispatch::run(dispatch_handle, dispatch_token).await;
+                });
                 if let Err(err) = http_server::serve(
                     http_server::DEFAULT_PORT,
                     listener_state,
