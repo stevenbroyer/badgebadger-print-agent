@@ -9,6 +9,13 @@ name: release
 # Required repo secrets:
 #   TAURI_SIGNING_PRIVATE_KEY           — contents of ~/.tauri/badgebadger.key
 #   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  — empty if the key has no password
+#
+# Why we don't use tauri-action: it scans the bundle dir, picks only the
+# primary installer for each target, uploads those, and CLEANS UP the
+# remaining files — including the `.nsis.zip` + `.sig` that the Tauri
+# updater needs to consume. We need both the installer AND the updater
+# bundle on the release, so we drive `tauri build` ourselves and manage
+# the upload entirely from PowerShell.
 
 on:
   push:
@@ -52,74 +59,89 @@ jobs:
         shell: pwsh
         run: ./scripts/fetch-sumatra.ps1
 
-      - name: Build + sign + release
-        id: tauri
-        uses: tauri-apps/tauri-action@v0
+      - name: Tauri build (signed)
+        shell: pwsh
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          # The action picks up the tag and creates a GitHub Release
-          # named after it. `__VERSION__` is replaced with the tag's
-          # version (without the leading `v`).
-          tagName: ${{ github.ref_name }}
-          releaseName: "BadgeBadger Print Agent v__VERSION__"
-          releaseBody: |
-            See `CHANGELOG.md` for what's new. This release is auto-applied
-            by agents already running v0.2.2+ via the in-app update banner.
-          releaseDraft: false
-          prerelease: false
-          # tauri-action@v0's `includeUpdaterJson` historically skips the
-          # upload with "Signature not found for the updater JSON" when it
-          # can't auto-match the .sig file to the bundle. We construct
-          # latest.json by hand in the next step instead, so leave this off.
-          includeUpdaterJson: false
+        # `pnpm tauri build` produces the .msi, the .exe NSIS installer,
+        # AND the updater artifacts (`.nsis.zip` + `.nsis.zip.sig`) when
+        # the signing key is present. Leaves everything in the bundle
+        # directory for the next step.
+        run: pnpm tauri build
 
-      # Build latest.json + upload bundle/sig assets for the Tauri auto-
-      # updater. `tauri.conf.json` points the updater at
-      # `releases/latest/download/latest.json`. Without this step the
-      # update endpoint 404s and existing operators silently never see new
-      # versions (matching what happened between v0.2.0 → v0.2.1).
-      - name: Generate + upload updater manifest
+      - name: Publish release + updater manifest
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
         run: |
           $version = $env:TAG -replace '^v', ''
-          $bundleDir = "src-tauri/target/release/bundle/nsis"
-          # Use -like via Where-Object — `Get-ChildItem -Filter` uses the
-          # Windows file-system matcher which behaves unpredictably with
-          # filenames containing spaces (Tauri produces e.g.
-          # `BadgeBadger Print Agent_0.3.0_x64-setup.nsis.zip`).
-          $all = Get-ChildItem -Path $bundleDir -File -ErrorAction SilentlyContinue
-          $bundle = $all | Where-Object { $_.Name -like "*_${version}_x64-setup.nsis.zip" } | Select-Object -First 1
-          $sigFile = $all | Where-Object { $_.Name -like "*_${version}_x64-setup.nsis.zip.sig" } | Select-Object -First 1
-          if (-not $bundle -or -not $sigFile) {
-            Write-Host ("files in {0}:" -f $bundleDir)
-            $all | ForEach-Object { Write-Host "  $($_.Name)" }
-            Write-Error "couldn't find bundle (.nsis.zip) and signature (.nsis.zip.sig)"
+          $nsisDir = "src-tauri/target/release/bundle/nsis"
+          $msiDir  = "src-tauri/target/release/bundle/msi"
+
+          # Match by suffix using `-like` — `Get-ChildItem -Filter` is
+          # unreliable with filenames containing spaces (Tauri produces
+          # e.g. `BadgeBadger Print Agent_0.3.1_x64-setup.nsis.zip`).
+          function FindOne($dir, $suffix) {
+            Get-ChildItem -Path $dir -File -ErrorAction SilentlyContinue |
+              Where-Object { $_.Name -like "*${suffix}" } |
+              Select-Object -First 1
+          }
+
+          $exe = FindOne $nsisDir "_${version}_x64-setup.exe"
+          $msi = FindOne $msiDir  "_${version}_x64_en-US.msi"
+          $zip = FindOne $nsisDir "_${version}_x64-setup.nsis.zip"
+          $sig = FindOne $nsisDir "_${version}_x64-setup.nsis.zip.sig"
+          $missing = @()
+          if (-not $exe) { $missing += "nsis .exe" }
+          if (-not $msi) { $missing += "msi" }
+          if (-not $zip) { $missing += "nsis.zip" }
+          if (-not $sig) { $missing += "nsis.zip.sig" }
+          if ($missing.Count -gt 0) {
+            Write-Host "missing artifacts: $($missing -join ', ')"
+            Write-Host ("nsis dir ({0}):" -f $nsisDir)
+            Get-ChildItem $nsisDir -File -ErrorAction SilentlyContinue |
+              ForEach-Object { Write-Host "  $($_.Name)" }
+            Write-Host ("msi dir ({0}):" -f $msiDir)
+            Get-ChildItem $msiDir -File -ErrorAction SilentlyContinue |
+              ForEach-Object { Write-Host "  $($_.Name)" }
             exit 1
           }
-          $signature = Get-Content -Raw $sigFile.FullName
 
-          # Stable filenames so the GitHub `releases/latest/download/...`
-          # redirect URL doesn't bake in the version.
-          $bundleAsset = "BadgeBadger.Print.Agent_${version}_x64-setup.nsis.zip"
-          Copy-Item $bundle.FullName $bundleAsset
+          # Stable filenames (no spaces) so `releases/latest/download/...`
+          # URLs are clean.
+          $exeAsset = "BadgeBadger.Print.Agent_${version}_x64-setup.exe"
+          $msiAsset = "BadgeBadger.Print.Agent_${version}_x64_en-US.msi"
+          $zipAsset = "BadgeBadger.Print.Agent_${version}_x64-setup.nsis.zip"
+          Copy-Item $exe.FullName $exeAsset
+          Copy-Item $msi.FullName $msiAsset
+          Copy-Item $zip.FullName $zipAsset
+          $signature = (Get-Content -Raw $sig.FullName).Trim()
 
+          # Manifest the agent's updater pulls from
+          # `releases/latest/download/latest.json`.
           $manifest = @{
-            version = $version
-            notes = "v${version}"
+            version  = $version
+            notes    = "v${version}"
             pub_date = (Get-Date -AsUTC).ToString("yyyy-MM-ddTHH:mm:ssZ")
             platforms = @{
               "windows-x86_64" = @{
-                signature = $signature.Trim()
-                url = "https://github.com/${env:GITHUB_REPOSITORY}/releases/download/${env:TAG}/${bundleAsset}"
+                signature = $signature
+                url       = "https://github.com/${env:GITHUB_REPOSITORY}/releases/download/${env:TAG}/${zipAsset}"
               }
             }
           } | ConvertTo-Json -Depth 5
           Set-Content -Path "latest.json" -Value $manifest -NoNewline
 
-          gh release upload "$env:TAG" "$bundleAsset" "latest.json" --repo "$env:GITHUB_REPOSITORY" --clobber
+          # Create the release (or refresh assets if it already exists).
+          $existing = gh release view $env:TAG --repo "$env:GITHUB_REPOSITORY" 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $env:TAG `
+              --repo "$env:GITHUB_REPOSITORY" `
+              --title "BadgeBadger Print Agent $env:TAG" `
+              --notes "See CHANGELOG.md for what's new. Auto-applied via the in-app update banner."
+          }
+          gh release upload $env:TAG `
+            $exeAsset $msiAsset $zipAsset "latest.json" `
+            --repo "$env:GITHUB_REPOSITORY" --clobber
