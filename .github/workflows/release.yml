@@ -53,6 +53,7 @@ jobs:
         run: ./scripts/fetch-sumatra.ps1
 
       - name: Build + sign + release
+        id: tauri
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -66,11 +67,52 @@ jobs:
           releaseName: "BadgeBadger Print Agent v__VERSION__"
           releaseBody: |
             See `CHANGELOG.md` for what's new. This release is auto-applied
-            by agents already running v0.1.0+ via the in-app update banner.
+            by agents already running v0.2.2+ via the in-app update banner.
           releaseDraft: false
           prerelease: false
-          # Generates `latest.json` from the build output and uploads it
-          # as a release asset alongside the installers. The agent's
-          # `tauri.conf.json` points at `releases/latest/download/latest.json`
-          # so this is what gets fetched on every update check.
-          includeUpdaterJson: true
+          # tauri-action@v0's `includeUpdaterJson` historically skips the
+          # upload with "Signature not found for the updater JSON" when it
+          # can't auto-match the .sig file to the bundle. We construct
+          # latest.json by hand in the next step instead, so leave this off.
+          includeUpdaterJson: false
+
+      # Build latest.json + upload bundle/sig assets for the Tauri auto-
+      # updater. `tauri.conf.json` points the updater at
+      # `releases/latest/download/latest.json`. Without this step the
+      # update endpoint 404s and existing operators silently never see new
+      # versions (matching what happened between v0.2.0 → v0.2.1).
+      - name: Generate + upload updater manifest
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          $version = $env:TAG -replace '^v', ''
+          $bundleDir = "src-tauri/target/release/bundle/nsis"
+          $bundle = Get-ChildItem $bundleDir -Filter "*_${version}_x64-setup.nsis.zip" | Select-Object -First 1
+          $sigFile = Get-ChildItem $bundleDir -Filter "*_${version}_x64-setup.nsis.zip.sig" | Select-Object -First 1
+          if (-not $bundle -or -not $sigFile) {
+            Write-Error "couldn't find bundle (.nsis.zip) and signature (.nsis.zip.sig) under $bundleDir"
+            exit 1
+          }
+          $signature = Get-Content -Raw $sigFile.FullName
+
+          # Stable filenames so the GitHub `releases/latest/download/...`
+          # redirect URL doesn't bake in the version.
+          $bundleAsset = "BadgeBadger.Print.Agent_${version}_x64-setup.nsis.zip"
+          Copy-Item $bundle.FullName $bundleAsset
+
+          $manifest = @{
+            version = $version
+            notes = "v${version}"
+            pub_date = (Get-Date -AsUTC).ToString("yyyy-MM-ddTHH:mm:ssZ")
+            platforms = @{
+              "windows-x86_64" = @{
+                signature = $signature.Trim()
+                url = "https://github.com/${env:GITHUB_REPOSITORY}/releases/download/${env:TAG}/${bundleAsset}"
+              }
+            }
+          } | ConvertTo-Json -Depth 5
+          Set-Content -Path "latest.json" -Value $manifest -NoNewline
+
+          gh release upload "$env:TAG" "$bundleAsset" "latest.json" --repo "$env:GITHUB_REPOSITORY" --clobber
