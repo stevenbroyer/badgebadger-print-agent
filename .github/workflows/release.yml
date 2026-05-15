@@ -97,7 +97,7 @@ jobs:
           $bundle = $all | Where-Object { $_.Name -like "*_${version}_x64-setup.nsis.zip" } | Select-Object -First 1
           $sigFile = $all | Where-Object { $_.Name -like "*_${version}_x64-setup.nsis.zip.sig" } | Select-Object -First 1
           if (-not $bundle -or -not $sigFile) {
-            Write-Host "files in $bundleDir:"
+            Write-Host ("files in {0}:" -f $bundleDir)
             $all | ForEach-Object { Write-Host "  $($_.Name)" }
             Write-Error "couldn't find bundle (.nsis.zip) and signature (.nsis.zip.sig)"
             exit 1
