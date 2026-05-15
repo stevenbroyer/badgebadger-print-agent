@@ -1,7 +1,7 @@
 {
   "name": "badgebadger-print-agent",
   "private": true,
-  "version": "0.3.1",
+  "version": "0.3.2",
   "type": "module",
   "description": "BadgeBadger Print Agent — listens on localhost for print jobs and dispatches them to the local printer.",
   "scripts": {
