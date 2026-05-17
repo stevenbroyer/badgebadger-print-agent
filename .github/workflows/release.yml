@@ -1,21 +1,21 @@
 name: release
 
-# Tag-triggered release. Push `v0.2.0` (or any `v*`) and this workflow
-# builds the Windows MSI + NSIS installer, signs the update bundle with
-# the Tauri updater key, and publishes everything as a GitHub Release —
-# including the `latest.json` manifest the agent's auto-updater pulls
-# from `releases/latest/download/latest.json`.
+# Tag-triggered release. Push `v*` and this workflow builds the Windows
+# installer + macOS .dmg, signs the updater bundles with the Tauri
+# updater key, and publishes everything to a GitHub Release including
+# a `latest.json` manifest the agent's auto-updater pulls from
+# `releases/latest/download/latest.json`.
 #
 # Required repo secrets:
 #   TAURI_SIGNING_PRIVATE_KEY           — contents of ~/.tauri/badgebadger.key
 #   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  — empty if the key has no password
 #
-# Why we don't use tauri-action: it scans the bundle dir, picks only the
-# primary installer for each target, uploads those, and CLEANS UP the
-# remaining files — including the `.nsis.zip` + `.sig` that the Tauri
-# updater needs to consume. We need both the installer AND the updater
-# bundle on the release, so we drive `tauri build` ourselves and manage
-# the upload entirely from PowerShell.
+# Architecture: a matrix `build` job produces platform-specific bundles
+# and uploads them as workflow artifacts. A follow-on `finalize` job
+# (Ubuntu, fast) downloads both, constructs `latest.json` with entries
+# for every platform, creates the GitHub release, and uploads everything
+# at once. This keeps latest.json atomic — operators never see a
+# half-published release that mentions only one platform.
 
 on:
   push:
@@ -27,7 +27,17 @@ permissions:
 
 jobs:
   build:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            platform: windows
+            artifact_name: build-windows
+          - runner: macos-latest
+            platform: macos
+            artifact_name: build-macos
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -44,46 +54,41 @@ jobs:
 
       - name: Setup Rust (stable)
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-pc-windows-msvc
 
       - name: Cache cargo registry + target
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> target
+          key: ${{ matrix.platform }}
 
       - name: pnpm install
         run: pnpm install --frozen-lockfile
 
-      - name: Fetch SumatraPDF (bundled into MSI)
+      - name: Fetch SumatraPDF (Windows only)
+        if: matrix.platform == 'windows'
         shell: pwsh
         run: ./scripts/fetch-sumatra.ps1
 
-      - name: Tauri build (signed)
+      # --- WINDOWS BUILD ---------------------------------------------
+      - name: Tauri build (Windows)
+        if: matrix.platform == 'windows'
         shell: pwsh
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        # `pnpm tauri build` produces the .msi + .exe + updater bundle
-        # (`.nsis.zip` + `.sig`) when the signing key is present AND
-        # `bundle.createUpdaterArtifacts` is set in tauri.conf.json. We
-        # set both, plus pass `--bundles` explicitly as belt-and-
-        # suspenders against future config drift.
         run: pnpm tauri build --bundles msi,nsis,updater
 
-      - name: Publish release + updater manifest
+      - name: Stage Windows artifacts
+        if: matrix.platform == 'windows'
         shell: pwsh
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
         run: |
           $version = $env:TAG -replace '^v', ''
           $nsisDir = "src-tauri/target/release/bundle/nsis"
           $msiDir  = "src-tauri/target/release/bundle/msi"
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
 
-          # Match by suffix using `-like` — `Get-ChildItem -Filter` is
-          # unreliable with filenames containing spaces (Tauri produces
-          # e.g. `BadgeBadger Print Agent_0.3.1_x64-setup.nsis.zip`).
           function FindOne($dir, $suffix) {
             Get-ChildItem -Path $dir -File -ErrorAction SilentlyContinue |
               Where-Object { $_.Name -like "*${suffix}" } |
@@ -94,55 +99,180 @@ jobs:
           $msi = FindOne $msiDir  "_${version}_x64_en-US.msi"
           $zip = FindOne $nsisDir "_${version}_x64-setup.nsis.zip"
           $sig = FindOne $nsisDir "_${version}_x64-setup.nsis.zip.sig"
+
           $missing = @()
           if (-not $exe) { $missing += "nsis .exe" }
           if (-not $msi) { $missing += "msi" }
           if (-not $zip) { $missing += "nsis.zip" }
           if (-not $sig) { $missing += "nsis.zip.sig" }
           if ($missing.Count -gt 0) {
-            Write-Host "missing artifacts: $($missing -join ', ')"
-            Write-Host ("nsis dir ({0}):" -f $nsisDir)
+            Write-Host ("missing artifacts: {0}" -f ($missing -join ", "))
             Get-ChildItem $nsisDir -File -ErrorAction SilentlyContinue |
-              ForEach-Object { Write-Host "  $($_.Name)" }
-            Write-Host ("msi dir ({0}):" -f $msiDir)
+              ForEach-Object { Write-Host "  nsis $($_.Name)" }
             Get-ChildItem $msiDir -File -ErrorAction SilentlyContinue |
-              ForEach-Object { Write-Host "  $($_.Name)" }
+              ForEach-Object { Write-Host "  msi $($_.Name)" }
             exit 1
           }
 
-          # Stable filenames (no spaces) so `releases/latest/download/...`
-          # URLs are clean.
-          $exeAsset = "BadgeBadger.Print.Agent_${version}_x64-setup.exe"
-          $msiAsset = "BadgeBadger.Print.Agent_${version}_x64_en-US.msi"
-          $zipAsset = "BadgeBadger.Print.Agent_${version}_x64-setup.nsis.zip"
-          Copy-Item $exe.FullName $exeAsset
-          Copy-Item $msi.FullName $msiAsset
-          Copy-Item $zip.FullName $zipAsset
-          $signature = (Get-Content -Raw $sig.FullName).Trim()
+          Copy-Item $exe.FullName "artifacts/BadgeBadger.Print.Agent_${version}_x64-setup.exe"
+          Copy-Item $msi.FullName "artifacts/BadgeBadger.Print.Agent_${version}_x64_en-US.msi"
+          Copy-Item $zip.FullName "artifacts/BadgeBadger.Print.Agent_${version}_x64-setup.nsis.zip"
+          Copy-Item $sig.FullName "artifacts/BadgeBadger.Print.Agent_${version}_x64-setup.nsis.zip.sig"
 
-          # Manifest the agent's updater pulls from
-          # `releases/latest/download/latest.json`.
-          $manifest = @{
-            version  = $version
-            notes    = "v${version}"
-            pub_date = (Get-Date -AsUTC).ToString("yyyy-MM-ddTHH:mm:ssZ")
-            platforms = @{
-              "windows-x86_64" = @{
-                signature = $signature
-                url       = "https://github.com/${env:GITHUB_REPOSITORY}/releases/download/${env:TAG}/${zipAsset}"
-              }
-            }
-          } | ConvertTo-Json -Depth 5
-          Set-Content -Path "latest.json" -Value $manifest -NoNewline
+      # --- MACOS BUILD -----------------------------------------------
+      - name: Tauri build (macOS)
+        if: matrix.platform == 'macos'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: pnpm tauri build --bundles app,dmg,updater
 
-          # Create the release (or refresh assets if it already exists).
-          $existing = gh release view $env:TAG --repo "$env:GITHUB_REPOSITORY" 2>$null
-          if ($LASTEXITCODE -ne 0) {
-            gh release create $env:TAG `
-              --repo "$env:GITHUB_REPOSITORY" `
-              --title "BadgeBadger Print Agent $env:TAG" `
+      - name: Stage macOS artifacts
+        if: matrix.platform == 'macos'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          macos_dir="src-tauri/target/release/bundle/macos"
+          dmg_dir="src-tauri/target/release/bundle/dmg"
+          mkdir -p artifacts
+
+          # macOS arch detection: macos-latest runners are arm64 (M-series)
+          # right now. We surface this in the bundled filename + latest.json
+          # platform key so future Intel-runner additions don't collide.
+          arch="$(uname -m)"
+          platform_key="darwin-${arch}"
+          # Tauri's bundler uses `aarch64` in some filenames and the runner
+          # arch returns `arm64`; normalise both into our published name.
+          published_arch="$arch"
+
+          # Locate artifacts. Tauri writes `<ProductName>_<version>_<arch>.dmg`
+          # and `<ProductName>.app.tar.gz` + `.sig` for the updater bundle.
+          dmg=$(find "$dmg_dir" -maxdepth 1 -name "*_${version}_*.dmg" | head -n1 || true)
+          tarball=$(find "$macos_dir" -maxdepth 1 -name "*.app.tar.gz" | head -n1 || true)
+          sig=$(find "$macos_dir" -maxdepth 1 -name "*.app.tar.gz.sig" | head -n1 || true)
+
+          missing=()
+          [ -z "${dmg:-}" ] && missing+=(".dmg")
+          [ -z "${tarball:-}" ] && missing+=(".app.tar.gz")
+          [ -z "${sig:-}" ] && missing+=(".app.tar.gz.sig")
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "missing artifacts: ${missing[*]}"
+            ls -la "$macos_dir" 2>/dev/null || true
+            ls -la "$dmg_dir" 2>/dev/null || true
+            exit 1
+          fi
+
+          # Stable filenames so `releases/latest/download/...` URLs stay
+          # consistent across releases.
+          cp "$dmg"     "artifacts/BadgeBadger.Print.Agent_${version}_${published_arch}.dmg"
+          cp "$tarball" "artifacts/BadgeBadger.Print.Agent_${version}_${published_arch}.app.tar.gz"
+          cp "$sig"     "artifacts/BadgeBadger.Print.Agent_${version}_${published_arch}.app.tar.gz.sig"
+
+          # Record the platform key + signature for the finalize job.
+          {
+            echo "platform_key=${platform_key}"
+            echo "arch=${published_arch}"
+          } > artifacts/macos.meta
+
+      # --- COMMON ----------------------------------------------------
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: artifacts/
+          retention-days: 7
+          if-no-files-found: error
+
+  finalize:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (needed for nothing but quiet errors)
+        uses: actions/checkout@v4
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: incoming
+
+      - name: Construct latest.json + publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+
+          win_dir="incoming/build-windows"
+          mac_dir="incoming/build-macos"
+
+          # Signatures live next to the bundles after the matrix copy.
+          win_zip="${win_dir}/BadgeBadger.Print.Agent_${version}_x64-setup.nsis.zip"
+          win_sig="${win_dir}/BadgeBadger.Print.Agent_${version}_x64-setup.nsis.zip.sig"
+          win_exe="${win_dir}/BadgeBadger.Print.Agent_${version}_x64-setup.exe"
+          win_msi="${win_dir}/BadgeBadger.Print.Agent_${version}_x64_en-US.msi"
+
+          # Read macOS arch from the side-channel meta file.
+          mac_arch=""
+          if [ -f "${mac_dir}/macos.meta" ]; then
+            mac_arch="$(grep '^arch=' "${mac_dir}/macos.meta" | cut -d= -f2)"
+          fi
+          mac_dmg=""
+          mac_tar=""
+          mac_sig=""
+          if [ -n "$mac_arch" ]; then
+            mac_dmg="${mac_dir}/BadgeBadger.Print.Agent_${version}_${mac_arch}.dmg"
+            mac_tar="${mac_dir}/BadgeBadger.Print.Agent_${version}_${mac_arch}.app.tar.gz"
+            mac_sig="${mac_dir}/BadgeBadger.Print.Agent_${version}_${mac_arch}.app.tar.gz.sig"
+          fi
+
+          pub_date="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+
+          # Build platforms map progressively so we can ship Windows-only
+          # if the macOS leg ever skips (and vice versa).
+          platforms="{}"
+
+          if [ -f "$win_sig" ] && [ -f "$win_zip" ]; then
+            win_signature="$(tr -d '\n' < "$win_sig")"
+            platforms="$(echo "$platforms" | jq --arg sig "$win_signature" --arg url "https://github.com/${REPO}/releases/download/${TAG}/$(basename "$win_zip")" \
+              '. + {"windows-x86_64": {signature: $sig, url: $url}}')"
+          fi
+
+          if [ -n "$mac_arch" ] && [ -f "$mac_sig" ] && [ -f "$mac_tar" ]; then
+            mac_signature="$(tr -d '\n' < "$mac_sig")"
+            # macOS arch maps: arm64 → darwin-aarch64, x86_64 → darwin-x86_64.
+            case "$mac_arch" in
+              arm64|aarch64) key="darwin-aarch64" ;;
+              x86_64)        key="darwin-x86_64" ;;
+              *)             key="darwin-${mac_arch}" ;;
+            esac
+            platforms="$(echo "$platforms" | jq --arg key "$key" --arg sig "$mac_signature" --arg url "https://github.com/${REPO}/releases/download/${TAG}/$(basename "$mac_tar")" \
+              '. + {($key): {signature: $sig, url: $url}}')"
+          fi
+
+          jq -n --arg version "$version" --arg notes "v${version}" --arg pub_date "$pub_date" --argjson platforms "$platforms" \
+            '{version: $version, notes: $notes, pub_date: $pub_date, platforms: $platforms}' > latest.json
+
+          echo "latest.json:"
+          cat latest.json
+
+          # Create the release if it doesn't exist, then upload everything.
+          if ! gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --repo "$REPO" \
+              --title "BadgeBadger Print Agent $TAG" \
               --notes "See CHANGELOG.md for what's new. Auto-applied via the in-app update banner."
-          }
-          gh release upload $env:TAG `
-            $exeAsset $msiAsset $zipAsset "latest.json" `
-            --repo "$env:GITHUB_REPOSITORY" --clobber
+          fi
+
+          upload_args=("$TAG")
+          [ -f "$win_exe" ] && upload_args+=("$win_exe")
+          [ -f "$win_msi" ] && upload_args+=("$win_msi")
+          [ -f "$win_zip" ] && upload_args+=("$win_zip")
+          [ -f "$mac_dmg" ] && upload_args+=("$mac_dmg")
+          [ -f "$mac_tar" ] && upload_args+=("$mac_tar")
+          upload_args+=("latest.json")
+
+          gh release upload "${upload_args[@]}" --repo "$REPO" --clobber
