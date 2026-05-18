@@ -1,6 +1,6 @@
 [package]
 name = "badgebadger-print-agent"
-version = "0.5.1"
+version = "0.5.2"
 description = "BadgeBadger Print Agent — listens for print jobs from the BadgeBadger web app and dispatches them to the local OS printer."
 authors = ["BadgeBadger"]
 edition = "2021"

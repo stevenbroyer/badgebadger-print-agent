@@ -181,6 +181,7 @@ fn build_cors_layer(origins: &[String]) -> CorsLayer {
             header::CONTENT_TYPE,
             header::AUTHORIZATION,
             HeaderName::from_static("x-agent-mode"),
+            HeaderName::from_static("x-job-meta"),
         ])
 }
 
