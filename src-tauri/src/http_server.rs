@@ -113,6 +113,17 @@ pub async fn serve(
         .merge(protected)
         .layer(RequestBodyLimitLayer::new(MAX_BODY_BYTES))
         .layer(cors)
+        // PNA (Chrome's Private Network Access) requires this header
+        // on the preflight response for any request from a public-
+        // internet origin (hq.badgebadger.app) to a private-network
+        // host (127.0.0.1). tower-http's CorsLayer doesn't ship it;
+        // we inject it ourselves on every response — browsers only
+        // read it on OPTIONS preflights but adding it to GETs is
+        // harmless. Without this, Chrome 117+ blocks the preflight
+        // and fetch() throws "TypeError: Failed to fetch" while the
+        // GET /health probe (a simple request, no preflight) keeps
+        // working — exactly the symptom Casino Pier reported.
+        .layer(middleware::from_fn(allow_private_network))
         .with_state(ctx);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
@@ -174,6 +185,22 @@ fn build_cors_layer(origins: &[String]) -> CorsLayer {
 }
 
 // ──────────────────────── middleware ────────────────────────
+
+// Chrome's Private Network Access enforcement (default since ~Chrome 117)
+// blocks any cross-origin request from a public-internet origin to a
+// private-network host unless the preflight OPTIONS response carries
+// `Access-Control-Allow-Private-Network: true`. tower-http's CorsLayer
+// doesn't ship this header; we add it unconditionally on every response
+// so PNA preflights pass. Non-OPTIONS responses also carry the header
+// but browsers ignore it there, which is fine.
+async fn allow_private_network(req: Request, next: Next) -> Response {
+    let mut response = next.run(req).await;
+    response.headers_mut().insert(
+        HeaderName::from_static("access-control-allow-private-network"),
+        HeaderValue::from_static("true"),
+    );
+    response
+}
 
 async fn require_origin(
     State(ctx): State<AgentCtx>,
