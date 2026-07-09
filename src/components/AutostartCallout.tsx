@@ -1,8 +1,5 @@
-import { useEffect, useState } from "react";
-import {
-  enable as enableAutostart,
-  isEnabled as isAutostartEnabled,
-} from "@tauri-apps/plugin-autostart";
+import { useState } from "react";
+import { useAutostart } from "../useAutostart";
 import { CheckIcon } from "./icons";
 
 // First-run friendly affordance for the "launch on login" registration.
@@ -14,30 +11,15 @@ import { CheckIcon } from "./icons";
 // flip it off from SettingsCard if they ever need to.
 
 export function AutostartCallout() {
-  const [autostart, setAutostart] = useState<boolean | null>(null);
+  const { autostart, enable } = useAutostart();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    isAutostartEnabled()
-      .then((v) => {
-        if (!cancelled) setAutostart(v);
-      })
-      .catch(() => {
-        if (!cancelled) setAutostart(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   async function handleEnable() {
     setError(null);
     setPending(true);
     try {
-      await enableAutostart();
-      setAutostart(true);
+      await enable();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {

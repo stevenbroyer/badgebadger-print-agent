@@ -1,9 +1,5 @@
-import { useEffect, useState } from "react";
-import {
-  disable as disableAutostart,
-  enable as enableAutostart,
-  isEnabled as isAutostartEnabled,
-} from "@tauri-apps/plugin-autostart";
+import { useState } from "react";
+import { useAutostart } from "../useAutostart";
 import { CopyIcon, CheckIcon } from "./icons";
 import type { UpdaterState } from "./UpdateBanner";
 
@@ -20,34 +16,18 @@ export function SettingsCard({
   updaterState,
   onCheckForUpdates,
 }: Props) {
-  const [autostart, setAutostart] = useState<boolean | null>(null);
+  const { autostart, enable, disable } = useAutostart();
   const [pending, setPending] = useState(false);
   const [copied, setCopied] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    isAutostartEnabled()
-      .then((v) => {
-        if (!cancelled) setAutostart(v);
-      })
-      .catch(() => {
-        if (!cancelled) setAutostart(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   async function toggleAutostart() {
     if (autostart === null) return;
     setPending(true);
     try {
       if (autostart) {
-        await disableAutostart();
-        setAutostart(false);
+        await disable();
       } else {
-        await enableAutostart();
-        setAutostart(true);
+        await enable();
       }
     } finally {
       setPending(false);
