@@ -13,13 +13,14 @@
     "windows": [
       {
         "title": "BadgeBadger Print Agent",
-        "width": 540,
-        "height": 640,
-        "minWidth": 420,
-        "minHeight": 480,
-        "resizable": true,
+        "width": 420,
+        "height": 600,
+        "minWidth": 400,
+        "minHeight": 520,
+        "resizable": false,
         "fullscreen": false,
-        "decorations": true
+        "decorations": true,
+        "backgroundColor": "#ece9e2"
       }
     ],
     "security": {
@@ -29,6 +30,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "BadgeBadger",
+    "copyright": "© 2026 BadgeBadger",
+    "homepage": "https://badgebadger.app",
     "createUpdaterArtifacts": "v1Compatible",
     "icon": [
       "icons/32x32.png",
@@ -43,6 +47,9 @@
     "windows": {
       "wix": {
         "language": "en-US"
+      },
+      "webviewInstallMode": {
+        "type": "offlineInstaller"
       }
     },
     "category": "Utility",

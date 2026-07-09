@@ -1,39 +1,76 @@
-/* ─── Theme tokens ────────────────────────────────────────────── */
+/* ─── Theme tokens — BadgeBadger brand (light default + dark) ─────
+   Same token NAMES the rest of the sheet already uses, rebased on the
+   product palette: Brand Blue #1E88E5, ivory #F4EBDD, slate #1A1B20,
+   Pine (ok) / amber (warn) / Rust (bad). Flat surfaces, one shadow level
+   — the glassmorphism is gone. Both themes are first-class; the viewer's
+   OS preference picks one. ────────────────────────────────────────── */
 :root {
-  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
-    system-ui, "Helvetica Neue", Arial, sans-serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+    "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas,
     monospace;
 
-  --bg: #0a0d14;
-  --bg-elev-1: rgba(255, 255, 255, 0.035);
-  --bg-elev-2: rgba(255, 255, 255, 0.06);
-  --border: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.14);
+  /* Light (default) — warm ivory paper, slate ink, blue accent. */
+  --bg: #ece9e2;
+  --bg-elev-1: #f6f4ee;
+  --bg-elev-2: #ffffff;
+  --border: #e1ddd2;
+  --border-strong: #d3cec1;
 
-  --fg: #f5f6fa;
-  --fg-muted: rgba(245, 246, 250, 0.62);
-  --fg-faint: rgba(245, 246, 250, 0.4);
+  --fg: #1a1b20;
+  --fg-muted: #4b515b;
+  --fg-faint: #6b6f78; /* AA-legible even at 11px */
 
-  --accent: #6366f1;
-  --accent-soft: rgba(99, 102, 241, 0.18);
-  --accent-glow: rgba(99, 102, 241, 0.4);
+  --accent: #1565c0; /* deepened blue — white text + text-on-light clear AA */
+  --accent-pure: #1e88e5; /* the true brand blue, for fills/coin */
+  --accent-soft: rgba(30, 136, 229, 0.12);
+  --accent-glow: rgba(30, 136, 229, 0.32);
 
-  --ok: #34d399;
-  --ok-soft: rgba(52, 211, 153, 0.18);
-  --warn: #fbbf24;
-  --warn-soft: rgba(251, 191, 36, 0.16);
-  --bad: #f87171;
-  --bad-soft: rgba(248, 113, 113, 0.18);
+  --ok: #2f7d55;
+  --ok-soft: rgba(47, 125, 85, 0.14);
+  --warn: #a35a12;
+  --warn-soft: rgba(224, 138, 40, 0.16);
+  --bad: #b7412a; /* Signal Rust, darkened for text on light */
+  --bad-soft: rgba(224, 87, 58, 0.14);
 
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 16px;
-  --radius-xl: 22px;
+  --radius-xl: 20px;
 
-  --shadow-card:
-    0 1px 0 rgba(255, 255, 255, 0.04) inset,
-    0 22px 44px -28px rgba(0, 0, 0, 0.55);
+  --shadow-card: 0 1px 2px rgba(26, 27, 32, 0.05),
+    0 12px 28px -18px rgba(26, 27, 32, 0.22);
+
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #131418; /* Slate Sett */
+    --bg-elev-1: #191b20;
+    --bg-elev-2: #1f2126;
+    --border: #2b2e35;
+    --border-strong: #363a42;
+
+    --fg: #f4ebdd; /* Ivory */
+    --fg-muted: #c3c0b8;
+    --fg-faint: #9195a0;
+
+    --accent: #6db2f2; /* brightened for text/icons on dark */
+    --accent-pure: #2f8ae6;
+    --accent-soft: rgba(47, 138, 230, 0.2);
+    --accent-glow: rgba(47, 138, 230, 0.4);
+
+    --ok: #6fce8f;
+    --ok-soft: rgba(111, 206, 143, 0.16);
+    --warn: #e0a340;
+    --warn-soft: rgba(224, 138, 40, 0.18);
+    --bad: #ef7455;
+    --bad-soft: rgba(239, 116, 85, 0.18);
+
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3),
+      0 16px 34px -20px rgba(0, 0, 0, 0.6);
+  }
 }
 
 /* ─── Reset + base ────────────────────────────────────────────── */
@@ -54,14 +91,15 @@ body {
   font-size: 14px;
   line-height: 1.5;
   color: var(--fg);
+  /* A single, very quiet brand wash at the top — no more crypto-dashboard
+     glow soup. */
   background:
-    radial-gradient(circle at 12% -10%, rgba(99, 102, 241, 0.18), transparent 60%),
-    radial-gradient(circle at 88% 110%, rgba(34, 211, 238, 0.1), transparent 65%),
+    radial-gradient(120% 60% at 50% -20%, var(--accent-soft), transparent 60%),
     var(--bg);
+  background-attachment: fixed;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
-  color-scheme: dark;
 }
 
 button {
@@ -113,24 +151,42 @@ a:hover {
   flex-shrink: 0;
 }
 
+/* The mascot in a Brand-Blue coin — the same lockup used across the product
+   (emails, login). Holds the real illustrated badger SVG at ~66%. */
 .brand-mark {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
-  background: linear-gradient(140deg, rgba(99, 102, 241, 0.25), rgba(34, 211, 238, 0.15));
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  font-size: 24px;
-  filter: drop-shadow(0 6px 18px rgba(99, 102, 241, 0.35));
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--accent-pure);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14),
+    0 4px 12px -4px var(--accent-glow);
+  flex-shrink: 0;
+}
+
+.brand-mark img {
+  width: 66%;
+  height: 66%;
+  display: block;
 }
 
 .header h1 {
   margin: 0;
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 800;
   letter-spacing: -0.01em;
+}
+
+/* Two-tone wordmark: "Badge" in blue, "Badger" in ink. */
+.header h1 .wm-badge {
+  color: var(--accent);
+}
+
+.header h1 .header__product {
+  font-weight: 500;
+  color: var(--fg-muted);
 }
 
 .subtitle {
@@ -425,18 +481,17 @@ a:hover {
 
 .printer-row__name {
   flex: 1;
-  font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .badge {
   font-size: 10.5px;
-  font-weight: 600;
+  font-weight: 700;
   letter-spacing: 0.04em;
   padding: 3px 7px;
   border-radius: 999px;
-  background: rgba(99, 102, 241, 0.25);
-  color: #c7c8ff;
+  background: var(--accent-soft);
+  color: var(--accent);
   text-transform: uppercase;
 }
 
@@ -495,13 +550,21 @@ a:hover {
   backdrop-filter: blur(14px);
 }
 
+/* An available/downloading update is GOOD news — use the brand-blue info
+   tone, not the amber warning the base rule implies. */
+.update-banner--available {
+  border-color: color-mix(in srgb, var(--accent) 32%, transparent);
+  background: var(--accent-soft);
+}
+
+.update-banner--available .update-banner__icon {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
 .update-banner--error {
-  border-color: rgba(248, 113, 113, 0.32);
-  background: linear-gradient(
-    180deg,
-    rgba(248, 113, 113, 0.14),
-    rgba(248, 113, 113, 0.06)
-  );
+  border-color: color-mix(in srgb, var(--bad) 32%, transparent);
+  background: var(--bad-soft);
 }
 
 .update-banner__icon {
@@ -741,9 +804,9 @@ a:hover {
 }
 
 .btn--primary {
-  background: linear-gradient(180deg, #6366f1 0%, #4f46e5 100%);
-  color: white;
-  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.18) inset, 0 8px 22px -10px var(--accent-glow);
+  background: var(--accent);
+  color: #ffffff;
+  box-shadow: 0 6px 16px -8px var(--accent-glow);
 }
 
 .btn--ghost {
@@ -862,6 +925,52 @@ a:hover {
   margin: 10px 0 0;
   font-size: 12px;
   color: var(--bad);
+}
+
+/* Advanced disclosure — was an unstyled raw browser triangle. */
+.pair__advanced {
+  margin-top: 2px;
+}
+
+.pair__advanced > summary {
+  cursor: pointer;
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--fg-muted);
+  padding: 4px 0;
+  user-select: none;
+}
+
+.pair__advanced > summary::-webkit-details-marker {
+  display: none;
+}
+
+.pair__advanced > summary::before {
+  content: "›";
+  display: inline-block;
+  transition: transform 140ms ease;
+  color: var(--fg-faint);
+  font-size: 15px;
+  line-height: 1;
+}
+
+.pair__advanced[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.pair__advanced > summary:hover {
+  color: var(--fg);
+}
+
+.pair__hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg-muted);
 }
 
 /* ─── Footer ─────────────────────────────────────────────────── */

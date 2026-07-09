@@ -176,11 +176,14 @@ export default function App() {
   return (
     <main className="shell">
       <header className="header">
-        <span className="brand-mark" aria-hidden>
-          🦡
+        <span className="brand-mark">
+          <img src="/mascot.svg" alt="" aria-hidden />
         </span>
         <div className="header__title">
-          <h1>BadgeBadger Print Agent</h1>
+          <h1>
+            <span className="wm-badge">Badge</span>Badger{" "}
+            <span className="header__product">Print Agent</span>
+          </h1>
           <p className="subtitle">
             Quietly forwards badge prints from BadgeBadger to your local
             printer.
