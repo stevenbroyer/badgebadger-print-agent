@@ -55,6 +55,7 @@ export function useUpdater() {
 
   // Check on mount + every 6 h.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- runCheck() runs an async update check against the Tauri updater backend (external system) and only sets "checking" before its first await; a legitimate synchronize-with-external-system effect plus a 6h polling interval, not derived render state
     void runCheck();
     const id = setInterval(() => void runCheck(), SIX_HOURS_MS);
     return () => clearInterval(id);
