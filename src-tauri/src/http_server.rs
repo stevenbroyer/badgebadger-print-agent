@@ -45,7 +45,7 @@ use std::sync::Arc;
 
 use axum::{
     Router,
-    extract::{Query, Request, State},
+    extract::{DefaultBodyLimit, Query, Request, State},
     http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Json, Response},
@@ -111,6 +111,12 @@ pub async fn serve(
 
     let router = public
         .merge(protected)
+        // BOTH limits are required. RequestBodyLimitLayer (tower-http) caps
+        // the raw stream, but axum's `Bytes` extractor enforces its OWN
+        // DefaultBodyLimit (2 MB) unless raised — the lower wins, so without
+        // this line the effective cap was 2 MB and real bulk prints (the
+        // 5 MB batches the comment above promises) failed with 413.
+        .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .layer(RequestBodyLimitLayer::new(MAX_BODY_BYTES))
         .layer(cors)
         // PNA (Chrome's Private Network Access) requires this header
@@ -330,7 +336,17 @@ struct HealthResponse {
     protocol: &'static str,
 }
 
-async fn health() -> impl IntoResponse {
+fn platform_str() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else {
+        "linux"
+    }
+}
+
+fn build_health_response() -> HealthResponse {
     let hostname = std::env::var("COMPUTERNAME") // Windows
         .or_else(|_| std::env::var("HOSTNAME")) // most Unix shells
         .or_else(|_| {
@@ -343,17 +359,11 @@ async fn health() -> impl IntoResponse {
         })
         .unwrap_or_else(|_| "unknown".to_string());
 
-    Json(HealthResponse {
+    HealthResponse {
         ok: true,
         version: env!("CARGO_PKG_VERSION"),
         listening: true,
-        platform: if cfg!(target_os = "windows") {
-            "windows"
-        } else if cfg!(target_os = "macos") {
-            "macos"
-        } else {
-            "linux"
-        },
+        platform: platform_str(),
         agent_id: hostname.clone(),
         hostname,
         helper_installed: printer::helper_installed(),
@@ -361,7 +371,31 @@ async fn health() -> impl IntoResponse {
         printers: printer::list_printers().unwrap_or_default(),
         auth_required: true,
         protocol: "1",
-    })
+    }
+}
+
+async fn health() -> impl IntoResponse {
+    // helper_installed / default_printer / list_printers and the hostname
+    // fallback all shell out synchronously (lpstat, hostname). /health is
+    // unauthenticated, so running them inline would let a local process — or
+    // a site the operator visits — flood /health and starve tokio's worker
+    // threads (M2). Push the blocking work to the blocking pool.
+    let resp = tokio::task::spawn_blocking(build_health_response)
+        .await
+        .unwrap_or_else(|_| HealthResponse {
+            ok: true,
+            version: env!("CARGO_PKG_VERSION"),
+            listening: true,
+            platform: platform_str(),
+            agent_id: "unknown".to_string(),
+            hostname: "unknown".to_string(),
+            helper_installed: false,
+            default_printer: None,
+            printers: Vec::new(),
+            auth_required: true,
+            protocol: "1",
+        });
+    Json(resp)
 }
 
 #[derive(Debug, Deserialize)]

@@ -175,6 +175,7 @@ version = "0.5.2"
 dependencies = [
  "anyhow",
  "axum",
+ "futures-util",
  "getrandom 0.2.17",
  "hostname",
  "once_cell",

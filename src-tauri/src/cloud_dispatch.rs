@@ -222,7 +222,65 @@ async fn process_job(
     }
 }
 
+// Cloud jobs carry a download_url the agent fetches and prints. The local
+// /print path is careful (https, size cap, %PDF- sniff); this path used to be
+// wide open — fetch any URL verbatim, buffer unbounded, hand raw bytes to the
+// PDF parser. That made the agent an SSRF probe onto the operator's LAN, an
+// OOM target, and a way to feed non-PDF bytes to SumatraPDF. Harden it to
+// match ingress. (Residual, tracked: a hostname that RESOLVES to a private IP
+// — DNS rebinding — and redirect-to-internal aren't caught here; those need
+// DNS-resolution checks or a host allowlist tied to where PDFs are actually
+// hosted, plus per-job signing. See H2.)
+const MAX_PDF_BYTES: usize = 25 * 1024 * 1024;
+
+fn is_forbidden_ip(ip: &std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            v4.is_private()
+                || v4.is_loopback()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+                || v4.octets()[0] == 0
+                // 100.64.0.0/10 carrier-grade NAT
+                || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xc0) == 64)
+        }
+        std::net::IpAddr::V6(v6) => {
+            v6.is_loopback()
+                || v6.is_unspecified()
+                // fc00::/7 unique-local
+                || (v6.segments()[0] & 0xfe00) == 0xfc00
+                // fe80::/10 link-local
+                || (v6.segments()[0] & 0xffc0) == 0xfe80
+        }
+    }
+}
+
+fn validate_download_url(raw: &str) -> Result<()> {
+    let parsed = reqwest::Url::parse(raw).context("invalid download URL")?;
+    if parsed.scheme() != "https" {
+        anyhow::bail!("download URL must be https, got {}", parsed.scheme());
+    }
+    let host = parsed
+        .host_str()
+        .context("download URL has no host")?
+        .trim_start_matches('[')
+        .trim_end_matches(']');
+    // Only IP-literal hosts get range-checked; public domains pass. This
+    // blocks the classic SSRF payloads (169.254.169.254, 127.0.0.1, 10.x…).
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        if is_forbidden_ip(&ip) {
+            anyhow::bail!("download URL host {host} is a private/reserved address");
+        }
+    }
+    Ok(())
+}
+
 async fn download_pdf(client: &reqwest::Client, url: &str) -> Result<Vec<u8>> {
+    use futures_util::StreamExt;
+
+    validate_download_url(url)?;
+
     let res = client
         .get(url)
         .send()
@@ -231,8 +289,28 @@ async fn download_pdf(client: &reqwest::Client, url: &str) -> Result<Vec<u8>> {
     if !res.status().is_success() {
         anyhow::bail!("PDF download status {}", res.status());
     }
-    let bytes = res.bytes().await.context("PDF body read failed")?;
-    Ok(bytes.to_vec())
+    // Fast reject on an honest Content-Length before streaming a byte.
+    if let Some(len) = res.content_length() {
+        if len as usize > MAX_PDF_BYTES {
+            anyhow::bail!("PDF too large: {len} bytes > {MAX_PDF_BYTES} cap");
+        }
+    }
+    // Stream with a hard cap so a lying/absent Content-Length can't OOM us.
+    let mut stream = res.bytes_stream();
+    let mut buf: Vec<u8> = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.context("PDF body stream failed")?;
+        if buf.len() + chunk.len() > MAX_PDF_BYTES {
+            anyhow::bail!("PDF exceeds {MAX_PDF_BYTES} byte cap");
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    // Same sniff the local ingress path uses — never hand non-PDF bytes to
+    // the printer/PDF parser.
+    if buf.len() < 5 || &buf[..5] != b"%PDF-" {
+        anyhow::bail!("downloaded body is not a PDF (missing %PDF- signature)");
+    }
+    Ok(buf)
 }
 
 async fn post_ack(
