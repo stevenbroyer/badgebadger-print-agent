@@ -153,6 +153,10 @@ export default function App() {
   }, [status]);
 
   const allReady = checklist.every((c) => c.done);
+  // Setup mode until we have a status AND every checklist item is done. Note
+  // [].every() is vacuously true, so the `!status` guard matters while the
+  // first status is still loading.
+  const setupMode = !status || !allReady;
 
   // Derive a "Today: N badges" + "Last: Sam Rivera" chip from the
   // activity ring buffer. We only count successful prints since
@@ -213,24 +217,38 @@ export default function App() {
 
       <UpdateBanner state={updater.state} onInstall={updater.install} />
 
-      <AutostartCallout />
-
-      {!allReady && status ? (
-        <ChecklistCard items={checklist} />
-      ) : null}
-
-      <PairingCard ready={!!status?.listening} />
-
-      <PrinterCard
-        printers={status?.printers ?? []}
-        defaultPrinter={status?.defaultPrinter ?? null}
-        selectedPrinter={selectedPrinter}
-        onSelectPrinter={setSelectedPrinter}
-        onTestPrint={() => void handleTestPrint()}
-        testing={testing}
-      />
-
-      <ActivityCard items={activity} />
+      {/* Two macro-modes, never both. SETUP foregrounds the steps that get
+          an operator to their first print; READY foregrounds what just
+          happened and keeps setup controls quiet below. */}
+      {setupMode ? (
+        <>
+          {status ? <ChecklistCard items={checklist} /> : null}
+          <PrinterCard
+            printers={status?.printers ?? []}
+            defaultPrinter={status?.defaultPrinter ?? null}
+            selectedPrinter={selectedPrinter}
+            onSelectPrinter={setSelectedPrinter}
+            onTestPrint={() => void handleTestPrint()}
+            testing={testing}
+          />
+          <PairingCard ready={!!status?.listening} />
+          <AutostartCallout />
+        </>
+      ) : (
+        <>
+          <AutostartCallout />
+          <ActivityCard items={activity} />
+          <PrinterCard
+            printers={status?.printers ?? []}
+            defaultPrinter={status?.defaultPrinter ?? null}
+            selectedPrinter={selectedPrinter}
+            onSelectPrinter={setSelectedPrinter}
+            onTestPrint={() => void handleTestPrint()}
+            testing={testing}
+          />
+          <PairingCard ready={!!status?.listening} />
+        </>
+      )}
 
       <SettingsCard
         port={status?.listenerPort ?? null}

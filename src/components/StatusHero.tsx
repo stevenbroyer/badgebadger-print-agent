@@ -33,11 +33,17 @@ export function StatusHero({
     : ready
       ? "Ready to print"
       : "Almost ready";
+  // The single most-read line in the app — keep it human. Name the printer
+  // (the operator's real question is "where will my badge come out?"), not a
+  // localhost URL. The port lives in Settings → Advanced for the curious.
   const body = !listening
     ? "The local listener didn't start. Quit and re-launch the agent."
     : ready
-      ? `Listening on http://127.0.0.1:${port ?? "9988"} → ${defaultPrinter}`
-      : "Open the checklist below to finish setup.";
+      ? defaultPrinter
+        ? `Badge prints will print to ${defaultPrinter}.`
+        : "Watching for badge prints."
+      : "A couple of quick steps below and you're set.";
+  void port;
 
   return (
     <section className={`hero hero--${tone}`}>
