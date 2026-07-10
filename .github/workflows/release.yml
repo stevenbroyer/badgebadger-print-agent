@@ -125,7 +125,11 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: pnpm tauri build --bundles app,dmg,updater
+        # DMG dropped: bundle_dmg.sh drives Finder via AppleScript and fails on
+        # headless CI runners. The updater uses the .app.tar.gz, not the DMG, so
+        # dropping it unblocks the release. (Re-add once a headless-DMG path or a
+        # maintained create-dmg action is wired up for fresh macOS installs.)
+        run: pnpm tauri build --bundles app,updater
 
       - name: Stage macOS artifacts
         if: matrix.platform == 'macos'
@@ -153,8 +157,10 @@ jobs:
           tarball=$(find "$macos_dir" -maxdepth 1 -name "*.app.tar.gz" | head -n1 || true)
           sig=$(find "$macos_dir" -maxdepth 1 -name "*.app.tar.gz.sig" | head -n1 || true)
 
+          # The .app.tar.gz + .sig are REQUIRED (that's the updater bundle the
+          # fleet installs). The .dmg is optional — we no longer build it (see
+          # the build step), so only stage it if present.
           missing=()
-          [ -z "${dmg:-}" ] && missing+=(".dmg")
           [ -z "${tarball:-}" ] && missing+=(".app.tar.gz")
           [ -z "${sig:-}" ] && missing+=(".app.tar.gz.sig")
           if [ ${#missing[@]} -gt 0 ]; then
@@ -166,7 +172,7 @@ jobs:
 
           # Stable filenames so `releases/latest/download/...` URLs stay
           # consistent across releases.
-          cp "$dmg"     "artifacts/BadgeBadger.Print.Agent_${version}_${published_arch}.dmg"
+          [ -n "${dmg:-}" ] && cp "$dmg" "artifacts/BadgeBadger.Print.Agent_${version}_${published_arch}.dmg"
           cp "$tarball" "artifacts/BadgeBadger.Print.Agent_${version}_${published_arch}.app.tar.gz"
           cp "$sig"     "artifacts/BadgeBadger.Print.Agent_${version}_${published_arch}.app.tar.gz.sig"
 
