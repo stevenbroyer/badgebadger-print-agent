@@ -1,0 +1,110 @@
+name: macos-dmg
+
+# Builds the installable macOS download: one universal .dmg (Apple Silicon +
+# Intel) attached to a release. release.yml stopped building the DMG because
+# Tauri's bundle_dmg.sh drives Finder over AppleScript and times out on
+# headless runners. This job bundles the .app with Tauri and then builds a
+# plain drag-to-Applications DMG with hdiutil, which needs no Finder.
+#
+# It never touches latest.json or the updater bundles, so attaching a DMG to
+# an existing release can't push an update to installed agents.
+#
+# Runs after every successful tag release, or by hand for an existing tag:
+#   gh workflow run macos-dmg.yml -f tag=v0.6.0
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build and attach the DMG to (e.g. v0.6.0)"
+        required: true
+  workflow_run:
+    workflows: [release]
+    types: [completed]
+
+permissions:
+  contents: write
+
+jobs:
+  dmg:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: macos-latest
+    env:
+      TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.event.workflow_run.head_branch }}
+    steps:
+      - name: Checkout the tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Rust (stable, both Mac architectures)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache cargo registry + target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: macos-universal
+
+      - name: pnpm install
+        run: pnpm install --frozen-lockfile
+
+      # Universal .app only. Updater artifacts are off so this job needs no
+      # signing key and can't produce anything the auto-updater would pick up.
+      - name: Tauri build (universal .app)
+        run: pnpm tauri build --target universal-apple-darwin --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'
+
+      - name: Package DMG
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          app="src-tauri/target/universal-apple-darwin/release/bundle/macos/BadgeBadger Print Agent.app"
+          [ -d "$app" ] || { echo "missing $app"; ls -la "$(dirname "$app")" || true; exit 1; }
+
+          # Apple Silicon refuses to launch unsigned code. No Developer ID yet,
+          # so re-apply an ad-hoc signature across the merged universal bundle.
+          codesign --force --deep --sign - "$app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          exe="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")"
+          archs="$(lipo -archs "$app/Contents/MacOS/$exe")"
+          echo "architectures: $archs"
+          case "$archs" in *x86_64*) ;; *) echo "no Intel slice"; exit 1 ;; esac
+          case "$archs" in *arm64*) ;; *) echo "no Apple Silicon slice"; exit 1 ;; esac
+
+          staging="$(mktemp -d)"
+          cp -R "$app" "$staging/"
+          ln -s /Applications "$staging/Applications"
+          mkdir -p artifacts
+          dmg="artifacts/BadgeBadger.Print.Agent_${version}_universal.dmg"
+          # hdiutil occasionally reports "Resource busy" on CI; retry.
+          for attempt in 1 2 3; do
+            if hdiutil create -volname "BadgeBadger Print Agent" -srcfolder "$staging" -ov -format UDZO "$dmg"; then break; fi
+            [ "$attempt" = 3 ] && exit 1
+            sleep 5
+          done
+          hdiutil verify "$dmg"
+          ls -la artifacts
+
+      - name: Keep a copy on the run
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: artifacts/*.dmg
+          retention-days: 14
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$TAG" artifacts/*.dmg --repo "${{ github.repository }}" --clobber
