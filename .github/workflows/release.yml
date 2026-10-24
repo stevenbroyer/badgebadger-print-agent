@@ -124,7 +124,11 @@ jobs:
           Copy-Item $sig.FullName "artifacts/BadgeBadger.Print.Agent_${version}_x64-setup.nsis.zip.sig"
 
       # --- MACOS BUILD -----------------------------------------------
-      # Same import as macos-dmg.yml; keep the two in step.
+      # Same certificate import as macos-dmg.yml, except the notary key goes
+      # out under Tauri's APPLE_API_* names so Tauri notarizes and staples
+      # inside the build, before it packs the updater bundle from the app.
+      # Tauri gives up on a network error while waiting for Apple; if that
+      # happens, re-run the failed job.
       - name: Import the Developer ID certificate (macOS)
         if: matrix.platform == 'macos'
         env:
