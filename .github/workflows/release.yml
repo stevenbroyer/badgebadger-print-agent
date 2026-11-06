@@ -119,10 +119,17 @@ jobs:
         shell: pwsh
         env:
           WINDOWS_PUBLISHER: ${{ vars.WINDOWS_PUBLISHER }}
+        # The downloads, plus the app exe as packed inside the installer.
+        # Tauri signs the exe before packing it into each installer, then
+        # patches the copy left in target/release for the next bundle, so
+        # that copy never carries a valid signature.
         run: |
-          $files = @(Get-Item "src-tauri/target/release/badgebadger-print-agent.exe")
-          $files += Get-ChildItem "src-tauri/target/release/bundle/nsis" -Filter "*-setup.exe"
+          $files = @(Get-ChildItem "src-tauri/target/release/bundle/nsis" -Filter "*-setup.exe")
           $files += Get-ChildItem "src-tauri/target/release/bundle/msi" -Filter "*.msi"
+          $inner = Join-Path $env:RUNNER_TEMP "nsis-inner"
+          7z x $files[0].FullName "-o$inner" badgebadger-print-agent.exe -y | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "couldn't unpack the app exe from the installer" }
+          $files += Get-Item (Join-Path $inner "badgebadger-print-agent.exe")
           ./scripts/check-windows-signatures.ps1 @($files.FullName)
 
       - name: Stage Windows artifacts
