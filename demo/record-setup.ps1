@@ -184,7 +184,10 @@ try {
     Caption "Then print a test card to check" "Badge printer"
     Start-Sleep -Milliseconds 1600
     Click-Agent $agent "Test print"
-    Start-Sleep -Milliseconds 3200
+    # "Done" only once the agent says the card went out; a PDF printer can
+    # take a few seconds.
+    if (-not (Agent-Has $agent "Test card sent" 30)) { Write-Host "no 'Test card sent' notice" }
+    Start-Sleep -Milliseconds 400
     Caption "Done. Badges you print in BadgeBadger come out here" "Badge printer"
     Start-Sleep -Milliseconds 3800
     Caption "Close the window and it keeps running in the tray" "Badge printer"
