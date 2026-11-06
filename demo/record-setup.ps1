@@ -4,7 +4,7 @@
 # button and really clicks it.
 param(
     [string]$Setup, [string]$OutDir, [string]$SignInUrl = "",
-    [int]$X = 320, [int]$Y = 116, [int]$W = 1280, [int]$H = 800
+    [int]$X = 240, [int]$Y = 66, [int]$W = 1440, [int]$H = 900
 )
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "ui.ps1")
@@ -81,7 +81,7 @@ if ($SignInUrl) {
     # Signed in before the recording starts, so the sign-in link never shows.
     Start-Process -FilePath "msedge.exe" -ArgumentList @(
         "--remote-debugging-port=9333", "--no-first-run", "--no-default-browser-check",
-        "--window-position=832,176", "--window-size=736,680", $SignInUrl)
+        "--window-position=832,126", "--window-size=736,680", $SignInUrl)
     $u = $null
     $deadline = (Get-Date).AddSeconds(60)
     while ((Get-Date) -lt $deadline) {
@@ -135,7 +135,13 @@ try {
     $deadline = (Get-Date).AddSeconds(40)
     while (($agent = [Win]::FindAgent()) -eq [IntPtr]::Zero -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 250 }
     if ($agent -eq [IntPtr]::Zero) { throw "the agent window never appeared" }
-    if ($SignInUrl) { [void][Mouse]::MoveWindow($agent, 352, 176, 456, 680, $true) }
+    # Up a little, so the caption labels below never cover it; left of
+    # Edge when pairing.
+    $wr0 = New-Object Mouse+RECT
+    [void][Mouse]::GetWindowRect($agent, [ref]$wr0)
+    $aw, $ah = ($wr0.R - $wr0.L), ($wr0.B - $wr0.T)
+    $ax = if ($SignInUrl) { 352 } else { $X + [int](($W - $aw) / 2) }
+    [void][Mouse]::MoveWindow($agent, $ax, $Y + 60, $aw, $ah, $true)
     [Win]::Topmost($agent, $true)
     Write-Host ("agent shows Not connected yet: " + (Agent-Has $agent "Not connected yet" 30))
     Start-Sleep -Milliseconds 800
@@ -147,7 +153,7 @@ try {
         $deadline = (Get-Date).AddSeconds(30)
         while (-not (Has-Text 9333 "/pair-agent" "Confirm pair") -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 400 }
         $edge = Wait-Window -Contains "Edge" -TimeoutSec 10
-        if ($edge -ne [IntPtr]::Zero) { [void][Mouse]::MoveWindow($edge, 832, 176, 736, 680, $true); [Win]::Topmost($edge, $true) }
+        if ($edge -ne [IntPtr]::Zero) { [void][Mouse]::MoveWindow($edge, 832, $Y + 60, 736, $ah, $true); [Win]::Topmost($edge, $true) }
         Caption "BadgeBadger opens in your browser. Confirm this computer" "Pair"
         Start-Sleep -Milliseconds 2600
         Click-Edge "/pair-agent" "Confirm pair"

@@ -22,6 +22,8 @@ jobs:
 
       - name: Set up the screen, Edge and a card printer
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           Set-DisplayResolution -Width 1920 -Height 1080 -Force
           # A clean Edge: no first-run pages, prompts, sidebar or sign-in nags.
@@ -54,7 +56,8 @@ jobs:
           choco install ffmpeg --no-progress -y | Out-Null
           $ff = Get-ChildItem C:\ProgramData\chocolatey\lib\ffmpeg -Recurse -Filter ffmpeg.exe | Select-Object -First 1
           "FFMPEG=$($ff.FullName)" | Add-Content $env:GITHUB_ENV
-          Invoke-WebRequest "https://github.com/stevenbroyer/badgebadger-print-agent/releases/download/v0.7.0/BadgeBadger.Print.Agent_0.7.0_x64-setup.exe" -OutFile C:\demo\setup.exe
+          # The latest release's signed installer.
+          gh release download --repo stevenbroyer/badgebadger-print-agent --pattern "*_x64-setup.exe" --output C:\demo\setup.exe
           (Get-AuthenticodeSignature C:\demo\setup.exe).SignerCertificate.Subject
 
       - name: Record the setup
