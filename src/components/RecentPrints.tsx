@@ -6,7 +6,7 @@ import type { ActivityItem } from "../types";
 // badge go through?" is answered without opening BadgeBadger. The list is
 // in memory only and starts empty each time the agent starts.
 
-type Props = { items: ActivityItem[] };
+type Props = { items: ActivityItem[]; printsToday: number };
 
 const SHOWN = 3;
 
@@ -20,7 +20,7 @@ function ago(iso: string): string {
   return new Date(ts).toLocaleDateString();
 }
 
-export function RecentPrints({ items }: Props) {
+export function RecentPrints({ items, printsToday }: Props) {
   const [all, setAll] = useState(false);
   const shown = all ? items : items.slice(0, SHOWN);
 
@@ -30,6 +30,7 @@ export function RecentPrints({ items }: Props) {
         <h2 id="recent-title" className="section__title">
           Recent prints
         </h2>
+        {printsToday > 0 ? <span className="section__count">{printsToday} today</span> : null}
       </div>
 
       {items.length === 0 ? (

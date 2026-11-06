@@ -231,6 +231,13 @@ export default function App() {
     return { tone: "ready", headline: "Ready to print", body: `Badges print to ${status.defaultPrinter}.` };
   })();
 
+  // The tray icon's tooltip says what the card says, so hovering over the
+  // tray answers "is it working?" without opening the window.
+  const headline = station.headline;
+  useEffect(() => {
+    void invoke("set_tray_status", { status: headline }).catch(() => undefined);
+  }, [headline]);
+
   return (
     <main className="shell">
       <header className="topbar">
@@ -254,7 +261,6 @@ export default function App() {
         action={station.action}
         computerName={status?.computerName ?? null}
         connection={status?.listening ? status.connection : null}
-        printsToday={printsToday}
       />
 
       {autostart === false ? (
@@ -278,7 +284,7 @@ export default function App() {
         />
       ) : null}
 
-      <RecentPrints items={activity} />
+      <RecentPrints items={activity} printsToday={printsToday} />
 
       <Troubleshooting
         status={status}

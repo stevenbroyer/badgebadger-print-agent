@@ -137,6 +137,15 @@ fn recheck_connection() {
     cloud_dispatch::wake();
 }
 
+// The window keeps the tray tooltip in step with its status card.
+#[tauri::command]
+fn set_tray_status(app: tauri::AppHandle, status: String) {
+    if let Some(tray) = app.tray_by_id("main") {
+        let status: String = status.chars().take(80).collect();
+        let _ = tray.set_tooltip(Some(format!("BadgeBadger Print Agent: {status}")));
+    }
+}
+
 // The updater and "Restart the agent" both relaunch with this process's
 // arguments, so an agent started at sign-in with --hidden would come back
 // hidden right after someone clicked a button in its window. The window
@@ -449,7 +458,8 @@ pub fn run() {
             test_print,
             set_badge_printer,
             recheck_connection,
-            show_window_on_next_start
+            show_window_on_next_start,
+            set_tray_status
         ])
         .setup(move |app| {
             let app_handle = app.handle().clone();

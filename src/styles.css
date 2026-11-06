@@ -60,6 +60,10 @@
   --idle: #6b6f78;
   --idle-wash: rgba(26, 27, 32, 0.07);
 
+  /* The badge photo's backdrop, the same one the link-preview badge uses. */
+  --photo-top: #edf2f8;
+  --photo-bottom: #d3dde9;
+
   --radius-control: 8px;
   --radius-panel: 10px;
   --radius-card: 14px;
@@ -96,6 +100,9 @@
     --problem-wash: rgba(239, 116, 85, 0.16);
     --idle: #9195a0;
     --idle-wash: rgba(244, 235, 221, 0.07);
+
+    --photo-top: #2b3442;
+    --photo-bottom: #1d232c;
 
     --lift: 0 1px 2px rgba(0, 0, 0, 0.35), 0 12px 28px -18px rgba(0, 0, 0, 0.75);
   }
@@ -233,6 +240,10 @@ p {
   opacity: 0.55;
 }
 
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
 .btn--primary {
   padding: 9px 14px;
   border: 1px solid transparent;
@@ -269,8 +280,44 @@ p {
 }
 
 /* ─── Station badge ──────────────────────────────────────────────── */
-/* This computer's own ID badge: slot punch, a colour band for the state,
-   a photo with the status light, the computer's name as the badge number. */
+/* This computer's own ID badge, on a lanyard like the sign-up page's:
+   slot punch, a colour band for the state, the badger as the photo with
+   the status light, the computer's name as the badge number. */
+.station-wrap {
+  position: relative;
+  padding-top: 16px;
+}
+
+.lanyard {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  transform: translateX(-50%);
+}
+
+.lanyard__strap {
+  width: 12px;
+  height: 16px;
+  border-radius: 2px 2px 0 0;
+  background: var(--lanyard-coin);
+}
+
+/* The clip sits over the slot punch, as it would through a real one. */
+.lanyard__clip {
+  width: 26px;
+  height: 11px;
+  margin-top: -3px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, #d9dde3, #a9b0ba);
+  box-shadow:
+    inset 0 -1px 0 rgba(0, 0, 0, 0.18),
+    0 1px 2px rgba(0, 0, 0, 0.25);
+}
+
 .station {
   --tone: var(--idle);
   --tone-wash: var(--idle-wash);
@@ -296,12 +343,17 @@ p {
   --tone-wash: var(--problem-wash);
 }
 
+/* Washed in the state's colour with a firm edge, like a badge's role band:
+   readable at a glance, quiet up close. */
 .station__band {
   display: grid;
   place-items: center;
-  height: 18px;
+  height: 20px;
   background: var(--tone-wash);
-  transition: background-color 200ms ease;
+  box-shadow: inset 0 -2px 0 var(--tone);
+  transition:
+    background-color 200ms ease,
+    box-shadow 200ms ease;
 }
 
 .station__punch {
@@ -319,27 +371,46 @@ p {
   padding: 14px 16px;
 }
 
+/* A headshot on the same pale backdrop as the badge in the link preview. */
 .station__photo {
   position: relative;
-  display: grid;
-  place-items: center;
-  width: 50px;
-  height: 60px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  width: 54px;
+  height: 64px;
+  border: 1px solid var(--rule);
   border-radius: 8px;
-  background: var(--inset);
-  color: var(--ink-3);
+  background: linear-gradient(180deg, var(--photo-top), var(--photo-bottom));
+  overflow: hidden;
   flex-shrink: 0;
 }
 
+.station__photo img {
+  display: block;
+  width: 48px;
+  height: 52px;
+  transition:
+    filter 200ms ease,
+    opacity 200ms ease;
+}
+
+/* Until it's ready, the badger waits in grey. */
+.station:not(.station--ready) .station__photo img {
+  filter: grayscale(1);
+  opacity: 0.7;
+}
+
+/* Top corner, clear of the little badge the badger itself wears. */
 .station__light {
   position: absolute;
-  right: 6px;
-  bottom: 6px;
-  width: 9px;
-  height: 9px;
+  top: 5px;
+  right: 5px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   background: var(--tone);
-  box-shadow: 0 0 0 3px var(--tone-wash);
+  box-shadow: 0 0 0 2px var(--card-stock);
   transition: background-color 200ms ease;
 }
 
@@ -413,13 +484,13 @@ p {
   font: 600 13px/1.2 var(--font-body);
 }
 
-.section__links {
-  display: flex;
-  gap: 14px;
-}
-
 .section > .btn--link {
   align-self: flex-start;
+}
+
+.section__count {
+  font-size: 12px;
+  color: var(--ink-3);
 }
 
 .quiet {
@@ -478,9 +549,19 @@ p {
 }
 
 .chosen__note {
-  margin-top: 1px;
+  margin-top: 2px;
   font-size: 12px;
   color: var(--ink-3);
+}
+
+.chosen__note .tag {
+  margin-right: 6px;
+  vertical-align: 1px;
+}
+
+.chosen__test {
+  flex-shrink: 0;
+  align-self: center;
 }
 
 .suggest {
@@ -570,6 +651,22 @@ p {
 
 .print:last-child {
   border-bottom: 0;
+}
+
+/* A badge that just printed slides in at the top of the list. */
+.print {
+  animation: print-in 260ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+@keyframes print-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .print__mark {

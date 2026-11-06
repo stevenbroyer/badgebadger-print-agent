@@ -14,9 +14,10 @@
       {
         "title": "BadgeBadger Print Agent",
         "width": 440,
-        "height": 620,
+        "height": 640,
         "resizable": false,
         "maximizable": false,
+        "center": true,
         "fullscreen": false,
         "visible": false,
         "decorations": true,

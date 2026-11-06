@@ -52,20 +52,15 @@ export function BadgePrinter({
         <h2 id="badge-printer-title" className="section__title">
           Badge printer
         </h2>
-        <div className="section__links">
-          <button type="button" className="btn btn--link" onClick={onTestPrint} disabled={testing || !target}>
-            {testing ? "Sending…" : "Print a test card"}
-          </button>
-          <button
-            type="button"
-            className="btn btn--link"
-            aria-expanded={open}
-            aria-controls={listId}
-            onClick={() => setOpen((v) => !v)}
-          >
-            {open ? "Done" : "Change"}
-          </button>
-        </div>
+        <button
+          type="button"
+          className="btn btn--link"
+          aria-expanded={open}
+          aria-controls={listId}
+          onClick={() => setOpen((v) => !v)}
+        >
+          {open ? "Done" : "Change"}
+        </button>
       </div>
 
       <div className="chosen">
@@ -75,6 +70,7 @@ export function BadgePrinter({
         <div className="chosen__copy">
           <p className="chosen__name">{target ?? "No printer picked"}</p>
           <p className="chosen__note">
+            {target && printerKind(target) === "card" ? <span className="tag">Card printer</span> : null}
             {badgePrinter && !chosenInstalled
               ? `${badgePrinter} isn't connected, so badges go to ${osDefaultPrinter ?? "no printer"} until it's back.`
               : badgePrinter
@@ -84,7 +80,15 @@ export function BadgePrinter({
                   : "Pick one so badges have somewhere to go."}
           </p>
         </div>
-        {target && printerKind(target) === "card" ? <span className="tag">Card printer</span> : null}
+        <button
+          type="button"
+          className="btn btn--secondary chosen__test"
+          onClick={onTestPrint}
+          disabled={testing || !target}
+          title={target ? `Print a test card on ${target}` : undefined}
+        >
+          {testing ? "Sending…" : "Test print"}
+        </button>
       </div>
 
       {suggestion && !open ? (
