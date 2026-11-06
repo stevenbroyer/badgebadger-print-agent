@@ -2,7 +2,7 @@ name: demo-video
 
 # Records the agent's first setup on a clean Windows machine for the docs
 # video: install, pairing (when DEMO_SESSION holds a signed-in session
-# for the demo school), choosing the card printer, a test print. Runs only from the
+# for the demo org), choosing the card printer, a test print. Runs only from the
 # demo-video branch and never touches releases. The recording and its
 # caption log come back as an artifact.
 
@@ -46,9 +46,25 @@ jobs:
           # And as a user variable: setting it this way tells Explorer, which
           # is what the installer starts the agent through.
           [Environment]::SetEnvironmentVariable("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "--remote-debugging-port=9229", "User")
+          # The agent and the pairing page show this computer's name: a front
+          # desk instead of the cloud machine's. Windows reads the DNS host
+          # name from here on each call, so no restart is needed.
+          $tcp = "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters"
+          Set-ItemProperty -Path $tcp -Name "Hostname" -Value "FRONT-DESK"
+          Set-ItemProperty -Path $tcp -Name "NV Hostname" -Value "FRONT-DESK"
+          "host name: " + [System.Net.Dns]::GetHostName()
+          New-Item -ItemType Directory -Force -Path C:\demo | Out-Null
+          # Windows 11 has Cascadia Mono, which the agent shows the computer's
+          # name in; this server edition has neither it nor Consolas, and
+          # falls back to Courier New.
+          "mono fonts before: " + ((Get-ChildItem C:\Windows\Fonts | Where-Object Name -match "^(consola|cascadia)").Name -join ", ")
+          gh release download --repo microsoft/cascadia-code --pattern "CascadiaCode-*.zip" --output C:\demo\cascadia.zip
+          Expand-Archive C:\demo\cascadia.zip C:\demo\cascadia
+          $mono = Get-ChildItem C:\demo\cascadia -Recurse -Filter CascadiaMono.ttf | Select-Object -First 1
+          Copy-Item $mono.FullName C:\Windows\Fonts\CascadiaMono.ttf
+          New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts" -Name "Cascadia Mono Regular (TrueType)" -Value "CascadiaMono.ttf" -PropertyType String -Force | Out-Null
           # A card printer that prints into a file, so a test card is real
           # but goes nowhere.
-          New-Item -ItemType Directory -Force -Path C:\demo | Out-Null
           Add-PrinterPort -Name "C:\demo\test-card.pdf"
           Add-Printer -Name "Zebra ZC300 Card Printer" -DriverName "Microsoft Print To PDF" -PortName "C:\demo\test-card.pdf"
           (Get-CimInstance Win32_Printer -Filter "Name='Microsoft Print to PDF'") | Invoke-CimMethod -MethodName SetDefaultPrinter | Out-Null
