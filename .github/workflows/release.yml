@@ -14,6 +14,17 @@ name: release
 # updater bundle is signed with the Developer ID and notarized, the same as
 # the DMG; without them it's built unsigned, as before.
 #
+# Optional: the Azure Artifact Signing settings listed in
+# scripts/setup-windows-signing.ps1. With them the Windows app, installer
+# and MSI are Authenticode-signed, so Windows names the publisher instead of
+# "Unknown publisher"; without them they're built unsigned, as before. Set
+# the WINDOWS_PUBLISHER variable to the certificate's CN to have the build
+# fail if anything else signed it.
+#
+# Run it by hand (Actions → release → Run workflow) to build and sign from a
+# branch without publishing: the files stay on the run as artifacts, and
+# macos-dmg.yml skips those runs.
+#
 # Architecture: a matrix `build` job produces platform-specific bundles
 # and uploads them as workflow artifacts. A follow-on `finalize` job
 # (Ubuntu, fast) downloads both, constructs `latest.json` with entries
@@ -25,6 +36,7 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -74,13 +86,44 @@ jobs:
         run: ./scripts/fetch-sumatra.ps1
 
       # --- WINDOWS BUILD ---------------------------------------------
+      - name: Set up Windows code signing
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          ARTIFACT_SIGNING_ENDPOINT: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          ARTIFACT_SIGNING_ACCOUNT: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          ARTIFACT_SIGNING_PROFILE: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
+        run: ./scripts/setup-windows-signing.ps1
+
       - name: Tauri build (Windows)
         if: matrix.platform == 'windows'
         shell: pwsh
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: pnpm tauri build --bundles msi,nsis,updater
+          # Read by the signing dlib when sign-windows.ps1 runs.
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: |
+          $signing = @()
+          if ($env:WINDOWS_SIGNED -eq "1") { $signing = @("--config", $env:TAURI_SIGN_CONFIG) }
+          pnpm tauri build --bundles msi,nsis,updater @signing
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Check the Windows signatures
+        if: matrix.platform == 'windows' && env.WINDOWS_SIGNED == '1'
+        shell: pwsh
+        env:
+          WINDOWS_PUBLISHER: ${{ vars.WINDOWS_PUBLISHER }}
+        run: |
+          $files = @(Get-Item "src-tauri/target/release/badgebadger-print-agent.exe")
+          $files += Get-ChildItem "src-tauri/target/release/bundle/nsis" -Filter "*-setup.exe"
+          $files += Get-ChildItem "src-tauri/target/release/bundle/msi" -Filter "*.msi"
+          ./scripts/check-windows-signatures.ps1 @($files.FullName)
 
       - name: Stage Windows artifacts
         if: matrix.platform == 'windows'
@@ -88,7 +131,12 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
         run: |
-          $version = $env:TAG -replace '^v', ''
+          # The version comes from tauri.conf.json so a hand-run build from a
+          # branch stages too. A tag has to match it.
+          $version = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          if ($env:GITHUB_REF_TYPE -eq "tag" -and $env:TAG -ne "v$version") {
+            throw "tag $env:TAG doesn't match version $version in tauri.conf.json"
+          }
           $nsisDir = "src-tauri/target/release/bundle/nsis"
           $msiDir  = "src-tauri/target/release/bundle/msi"
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
@@ -202,7 +250,11 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          version="${TAG#v}"
+          version="$(jq -r .version src-tauri/tauri.conf.json)"
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$TAG" != "v$version" ]; then
+            echo "tag $TAG doesn't match version $version in tauri.conf.json"
+            exit 1
+          fi
           macos_dir="src-tauri/target/release/bundle/macos"
           dmg_dir="src-tauri/target/release/bundle/dmg"
           mkdir -p artifacts
@@ -264,6 +316,9 @@ jobs:
 
   finalize:
     needs: build
+    # Only a tag publishes. A hand-run build stops at the artifacts, so
+    # installed agents never see it.
+    if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (needed for nothing but quiet errors)
