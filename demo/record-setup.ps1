@@ -39,17 +39,29 @@ function Wait-Text([int]$Port, [string]$Match, [string]$Text, [int]$Seconds = 30
     return $false
 }
 
-# The agent's webview fills its window's client area.
-function Click-Agent([IntPtr]$Agent, [string]$Text) {
-    $deadline = (Get-Date).AddSeconds(20)
-    $r = $null
-    while (-not $r -and (Get-Date) -lt $deadline) {
-        $r = Find-Text 9229 "" $Text
-        if (-not $r) { Start-Sleep -Milliseconds 400 }
+# The agent window through Windows accessibility: its buttons and headings
+# come with their screen rectangles, so the cursor can go straight to them.
+function Agent-Rect([IntPtr]$Agent, [string]$Name, [int]$Seconds = 20) {
+    $deadline = (Get-Date).AddSeconds($Seconds)
+    while ((Get-Date) -lt $deadline) {
+        $el = Find-Element $Agent $Name
+        if ($el) {
+            $r = $el.Current.BoundingRectangle
+            if (-not $r.IsEmpty -and $r.Width -gt 0) { return $r }
+        }
+        Start-Sleep -Milliseconds 300
     }
-    if (-not $r) { throw "no '$Text' in the agent window" }
-    $o = [Mouse]::ClientOrigin($Agent)
-    Click-At ([int]($o.X + $r.x)) ([int]($o.Y + $r.y))
+    return $null
+}
+
+function Agent-Has([IntPtr]$Agent, [string]$Name, [int]$Seconds = 20) {
+    return [bool](Agent-Rect $Agent $Name $Seconds)
+}
+
+function Click-Agent([IntPtr]$Agent, [string]$Name) {
+    $r = Agent-Rect $Agent $Name
+    if (-not $r) { throw "no '$Name' in the agent window" }
+    Click-At ([int]($r.X + $r.Width / 2)) ([int]($r.Y + $r.Height / 2))
 }
 
 # Edge: the page sits below the tab strip and the address bar.
@@ -81,7 +93,6 @@ if ($SignInUrl) {
     Write-Host "signed in"
 }
 
-$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=9229"
 $backdrop = Start-Backdrop $X $Y $W $H
 $rec = Start-Recording (Join-Path $OutDir "setup-raw.mp4") $X $Y $W $H
 $agent = [IntPtr]::Zero
@@ -126,8 +137,7 @@ try {
     if ($agent -eq [IntPtr]::Zero) { throw "the agent window never appeared" }
     if ($SignInUrl) { [void][Mouse]::MoveWindow($agent, 352, 176, 456, 680, $true) }
     [Win]::Topmost($agent, $true)
-    Write-Host ("agent page: " + (Cdp 9229 "" "location.href"))
-    [void](Wait-Text 9229 "" "Not connected yet" 30)
+    Write-Host ("agent shows Not connected yet: " + (Agent-Has $agent "Not connected yet" 30))
     Start-Sleep -Milliseconds 800
 
     if ($SignInUrl) {
@@ -146,7 +156,7 @@ try {
         # Coming back to the agent re-checks the connection straight away.
         $o = [Mouse]::ClientOrigin($agent)
         Click-At ($o.X + 228) ($o.Y + 30) 500
-        [void](Wait-Text 9229 "" "Ready to print" 30)
+        [void](Agent-Has $agent "Ready to print" 30)
         Caption "Back in the agent: ready to print" "Pair"
         Start-Sleep -Milliseconds 2600
         if ($edge -ne [IntPtr]::Zero) { [Win]::Topmost($edge, $false) }
