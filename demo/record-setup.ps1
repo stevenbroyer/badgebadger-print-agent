@@ -166,7 +166,10 @@ try {
         Caption "BadgeBadger opens in your browser. Confirm this computer" "Pair"
         Start-Sleep -Milliseconds 2600
         Click-Edge "/pair-agent" "Confirm pair"
-        [void](Wait-Text 9333 "" "Computer paired" 20)
+        # The page says "Computer paired", then moves on to the computers
+        # list a second later; either one means it worked.
+        $deadline = (Get-Date).AddSeconds(20)
+        while (-not ((Has-Text 9333 "/pair-agent" "Computer paired") -or (Cdp 9333 "/settings/printers/agents" "true")) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 300 }
         Start-Sleep -Milliseconds 1600
         # Coming back to the agent re-checks the connection straight away.
         $o = [Mouse]::ClientOrigin($agent)
