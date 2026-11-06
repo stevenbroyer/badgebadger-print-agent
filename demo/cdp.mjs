@@ -1,7 +1,10 @@
 // Evaluates an expression in a page reachable over the Chrome DevTools
-// Protocol and prints the JSON result, or null.
-// node cdp.mjs <port> <url-substring or ""> <expression>
-const [, , port, match, expr] = process.argv;
+// Protocol and prints the JSON result, or null. The expression comes in
+// base64: Windows PowerShell drops the double quotes inside the arguments
+// it passes to a program.
+// node cdp.mjs <port> <url-substring> <expression in base64>
+const [, , port, match, b64] = process.argv;
+const expr = Buffer.from(b64 ?? "", "base64").toString("utf8");
 let targets;
 try {
   targets = await (await fetch(`http://127.0.0.1:${port}/json`)).json();

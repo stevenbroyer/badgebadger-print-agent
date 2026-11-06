@@ -12,7 +12,9 @@ $ErrorActionPreference = "Stop"
 $cdp = Join-Path $PSScriptRoot "cdp.mjs"
 
 function Cdp([int]$Port, [string]$Match, [string]$Expr) {
-    $out = & node $cdp $Port $Match $Expr
+    # In base64, or the double quotes inside it never reach node.
+    $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($Expr))
+    $out = & node $cdp $Port $Match $b64
     if (-not $out -or $out -eq "null") { return $null }
     return ($out | ConvertFrom-Json)
 }
