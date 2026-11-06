@@ -218,6 +218,8 @@ try {
             Write-Host "no Allow prompt in Edge"
         }
         Start-Sleep -Milliseconds 1600
+        # By now the page has looked up this computer's pairing.
+        Write-Host ("page asks to pair it again: " + (Has-Text 9333 "/settings/printers/agents" "Pair this workstation"))
         # Coming back to the agent re-checks the connection straight away.
         $o = [Mouse]::ClientOrigin($agent)
         Click-At ($o.X + 228) ($o.Y + 30) 500
