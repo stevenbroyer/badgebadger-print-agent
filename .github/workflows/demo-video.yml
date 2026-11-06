@@ -41,6 +41,9 @@ jobs:
           $wv = "HKLM:\SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments"
           New-Item -Path $wv -Force | Out-Null
           New-ItemProperty -Path $wv -Name "badgebadger-print-agent.exe" -Value "--remote-debugging-port=9229" -PropertyType String -Force | Out-Null
+          # And as a user variable: setting it this way tells Explorer, which
+          # is what the installer starts the agent through.
+          [Environment]::SetEnvironmentVariable("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "--remote-debugging-port=9229", "User")
           # A card printer that prints into a file, so a test card is real
           # but goes nowhere.
           New-Item -ItemType Directory -Force -Path C:\demo | Out-Null

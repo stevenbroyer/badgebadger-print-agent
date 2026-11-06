@@ -126,6 +126,7 @@ try {
     if ($agent -eq [IntPtr]::Zero) { throw "the agent window never appeared" }
     if ($SignInUrl) { [void][Mouse]::MoveWindow($agent, 352, 176, 456, 680, $true) }
     [Win]::Topmost($agent, $true)
+    Write-Host ("agent page: " + (Cdp 9229 "" "location.href"))
     [void](Wait-Text 9229 "" "Not connected yet" 30)
     Start-Sleep -Milliseconds 800
 
