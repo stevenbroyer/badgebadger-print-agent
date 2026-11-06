@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.1
+
+- A test print shows one notice instead of two. The Test print button
+  reports its own result, and the print it starts no longer adds a second
+  "Sent to the printer" notice on top.
+
 ## 0.7.0
 
 Windows pass and a new window. Existing installs get it from the in-app
