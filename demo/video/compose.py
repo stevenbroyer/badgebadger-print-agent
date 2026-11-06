@@ -185,9 +185,9 @@ warn = cap(ss, "Windows may warn")
 ss_cam = Camera([(0, 1.0, *mid), (warn + 0.15, 1.0, *mid), (warn + 1.15, 1.35, 720, 448)])
 parts.append(segment("smartscreen", ss_dir / "smartscreen2-raw.mp4", ss, 0.6, ss_end, ss_cam))
 
-# Hand edits for a recording, from edits.json beside its captions: caption
-# starts to move, and stretches to drop (static waits only, so the cut can't
-# be seen).
+# Hand edits for a recording, from edits.json beside its captions: where the
+# setup part starts, caption starts to move, and stretches to drop (static
+# waits only, so the cut can't be seen).
 ef = cloud_dir / "edits.json"
 edits = json.loads(ef.read_text(encoding="utf-8")) if ef.exists() else {}
 for prefix, start in edits.get("retime", {}).items():
@@ -201,12 +201,13 @@ cl[0]["text"] = "After Run anyway, the installer opens"
 cl_end = min(float(cl[-1]["end"]), duration(cloud_dir / "setup-raw.mp4") - 0.1)
 # Skip the seconds where the agent sits loading after Finish: cut from a few
 # seconds after the Finish caption to just before the next one.
-cuts = [(0.6, cl_end)]
+first = float(edits.get("start", 0.6))
+cuts = [(first, cl_end)]
 fin = next((i for i, c in enumerate(cl) if c["text"].startswith("Click Finish")), None)
 if fin is not None and fin + 1 < len(cl):
     a, b = float(cl[fin]["start"]) + 4.6, float(cl[fin + 1]["start"]) - 0.8
     if b - a > 1.5:
-        cuts = [(0.6, a), (b, cl_end)]
+        cuts = [(first, a), (b, cl_end)]
 for d0, d1 in edits.get("drop", []):
     cuts = [p for s, e in cuts for p in ([(s, d0), (d1, e)] if s < d0 < d1 < e else [(s, e)])]
 pairing = any(c.get("chapter") == "Pair" for c in cl)
