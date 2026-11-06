@@ -84,7 +84,7 @@ if ($SessionJson) {
     # origin, then the dashboard loads.
     Start-Process -FilePath "msedge.exe" -ArgumentList @(
         "--remote-debugging-port=9333", "--no-first-run", "--no-default-browser-check",
-        "--window-position=832,126", "--window-size=736,680", "https://hq.badgebadger.app/login")
+        "--window-position=832,$($Y + 96)", "--window-size=736,680", "https://hq.badgebadger.app/login")
     $u = $null
     $deadline = (Get-Date).AddSeconds(60)
     while (-not $u -and (Get-Date) -lt $deadline) { $u = Cdp 9333 "badgebadger.app" "location.href"; if (-not $u) { Start-Sleep -Milliseconds 700 } }
@@ -142,13 +142,15 @@ try {
     $deadline = (Get-Date).AddSeconds(40)
     while (($agent = [Win]::FindAgent()) -eq [IntPtr]::Zero -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 250 }
     if ($agent -eq [IntPtr]::Zero) { throw "the agent window never appeared" }
-    # Up a little, so the caption labels below never cover it; left of
-    # Edge when pairing.
+    # Up a little, so the caption labels below never cover it. When pairing
+    # it sits left of Edge, and a little lower so the chapter tag in the
+    # top-left corner clears its title bar.
     $wr0 = New-Object Mouse+RECT
     [void][Mouse]::GetWindowRect($agent, [ref]$wr0)
     $aw, $ah = ($wr0.R - $wr0.L), ($wr0.B - $wr0.T)
     $ax = if ($SessionJson) { 352 } else { $X + [int](($W - $aw) / 2) }
-    [void][Mouse]::MoveWindow($agent, $ax, $Y + 60, $aw, $ah, $true)
+    $ay = if ($SessionJson) { $Y + 96 } else { $Y + 60 }
+    [void][Mouse]::MoveWindow($agent, $ax, $ay, $aw, $ah, $true)
     [Win]::Topmost($agent, $true)
     Write-Host ("agent shows Not connected yet: " + (Agent-Has $agent "Not connected yet" 30))
     Start-Sleep -Milliseconds 800
@@ -160,7 +162,7 @@ try {
         $deadline = (Get-Date).AddSeconds(30)
         while (-not (Has-Text 9333 "/pair-agent" "Confirm pair") -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 400 }
         $edge = Wait-Window -Contains "Edge" -TimeoutSec 10
-        if ($edge -ne [IntPtr]::Zero) { [void][Mouse]::MoveWindow($edge, 832, $Y + 60, 736, $ah, $true); [Win]::Topmost($edge, $true) }
+        if ($edge -ne [IntPtr]::Zero) { [void][Mouse]::MoveWindow($edge, 832, $ay, 736, $ah, $true); [Win]::Topmost($edge, $true) }
         Caption "BadgeBadger opens in your browser. Confirm this computer" "Pair"
         Start-Sleep -Milliseconds 2600
         Click-Edge "/pair-agent" "Confirm pair"
