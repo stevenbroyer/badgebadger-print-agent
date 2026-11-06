@@ -81,9 +81,10 @@ $SessionJson = $env:DEMO_SESSION
 if ($SessionJson) {
     # Edge is signed in to the demo school before the recording starts, so
     # no sign-in screen shows: the session's cookies go in on the site's own
-    # origin, then the dashboard loads.
+    # origin, then the dashboard loads. Edge allows remote debugging only on a
+    # profile of its own; the workflow sends the links the agent opens there.
     Start-Process -FilePath "msedge.exe" -ArgumentList @(
-        "--remote-debugging-port=9333", "--no-first-run", "--no-default-browser-check",
+        "--remote-debugging-port=9333", "--user-data-dir=C:\demo\edge", "--no-first-run", "--no-default-browser-check",
         "--window-position=832,$($Y + 96)", "--window-size=736,680", "https://hq.badgebadger.app/login")
     $u = $null
     $deadline = (Get-Date).AddSeconds(60)

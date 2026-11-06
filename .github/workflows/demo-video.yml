@@ -37,6 +37,11 @@ jobs:
             ShowMicrosoftRewards = 0; EdgeCollectionsEnabled = 0; TranslateEnabled = 0
           }
           foreach ($k in $dword.Keys) { New-ItemProperty -Path $edge -Name $k -Value $dword[$k] -PropertyType DWord -Force | Out-Null }
+          # Edge allows remote debugging only on a profile of its own, so the
+          # recording signs in on one, and web links the agent opens go to it.
+          $open = "HKLM:\SOFTWARE\Classes\MSEdgeHTM\shell\open\command"
+          $cmd = (Get-ItemProperty $open).'(default)'
+          Set-ItemProperty -Path $open -Name "(default)" -Value ($cmd -replace " --single-argument", " --user-data-dir=C:\demo\edge --single-argument")
           # The installer starts the agent through Windows, so an environment
           # variable wouldn't reach it. WebView2's own policy does: it opens
           # the agent's page to the recording script for finding buttons.
@@ -102,47 +107,3 @@ jobs:
         with:
           name: setup-recording
           path: out/
-
-  # Temporary: can the recording drive Edge on its default profile, and do
-  # links the agent opens land in that same Edge?
-  probe-edge:
-    runs-on: windows-latest
-    steps:
-      - name: Probe Edge
-        shell: pwsh
-        run: |
-          $pol = "HKLM:\SOFTWARE\Policies\Microsoft\Edge"
-          New-Item -Path $pol -Force | Out-Null
-          foreach ($k in "HideFirstRunExperience", "SyncDisabled") { New-ItemProperty -Path $pol -Name $k -Value 1 -PropertyType DWord -Force | Out-Null }
-          New-ItemProperty -Path $pol -Name "DefaultBrowserSettingEnabled" -Value 0 -PropertyType DWord -Force | Out-Null
-          "Edge " + (Get-Item "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe").VersionInfo.ProductVersion
-          "https UserChoice: " + (Get-ItemProperty "HKCU:\Software\Microsoft\Windows\Shell\Associations\UrlAssociations\https\UserChoice" -ErrorAction SilentlyContinue).ProgId
-          foreach ($root in "HKLM:\SOFTWARE\Classes", "HKCU:\Software\Classes") {
-            $k = "$root\MSEdgeHTM\shell\open\command"
-            if (Test-Path $k) { "$k = " + (Get-ItemProperty $k).'(default)' }
-          }
-          function Tabs([int]$Port) {
-            try { ((Invoke-RestMethod "http://127.0.0.1:$Port/json/list") | Where-Object type -eq "page" | ForEach-Object { $_.url }) -join " | " } catch { "no CDP" }
-          }
-          # A: the default profile, as record-setup.ps1 launches it.
-          Start-Process -FilePath "msedge.exe" -ArgumentList "--remote-debugging-port=9333", "--no-first-run", "--no-default-browser-check", "https://example.com/?a-launch"
-          Start-Sleep -Seconds 8
-          "A launch: " + (Tabs 9333)
-          Start-Process "https://example.com/?a-shell"
-          Start-Sleep -Seconds 6
-          "A after a shell open: " + (Tabs 9333)
-          "A Edge windows: " + @(Get-Process msedge -ErrorAction SilentlyContinue | Where-Object MainWindowHandle -ne 0).Count
-          taskkill /IM msedge.exe /F | Out-Null
-          Start-Sleep -Seconds 3
-          # B: a profile of its own, with web links routed to it.
-          $k = "HKLM:\SOFTWARE\Classes\MSEdgeHTM\shell\open\command"
-          $cmd = (Get-ItemProperty $k).'(default)'
-          Set-ItemProperty -Path $k -Name "(default)" -Value ($cmd -replace " --single-argument", " --user-data-dir=C:\demo\edge --single-argument")
-          "B command: " + (Get-ItemProperty $k).'(default)'
-          Start-Process -FilePath "msedge.exe" -ArgumentList "--remote-debugging-port=9334", "--user-data-dir=C:\demo\edge", "--no-first-run", "--no-default-browser-check", "https://example.com/?b-launch"
-          Start-Sleep -Seconds 8
-          "B launch: " + (Tabs 9334)
-          Start-Process "https://example.com/?b-shell"
-          Start-Sleep -Seconds 6
-          "B after a shell open: " + (Tabs 9334)
-          "B Edge windows: " + @(Get-Process msedge -ErrorAction SilentlyContinue | Where-Object MainWindowHandle -ne 0).Count
