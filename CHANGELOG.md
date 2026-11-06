@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.2
+
+- Pairing works on a computer whose name has lower case letters or is
+  longer than 15 characters. The pairing link and the agent's status check
+  now use the same name, so BadgeBadger no longer asks to pair a computer
+  that is already paired.
+
 ## 0.7.1
 
 - A test print shows one notice instead of two. The Test print button
