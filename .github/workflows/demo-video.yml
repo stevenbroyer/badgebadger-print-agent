@@ -58,11 +58,6 @@ jobs:
           Set-ItemProperty -Path $tcp -Name "Hostname" -Value "FRONT-DESK"
           Set-ItemProperty -Path $tcp -Name "NV Hostname" -Value "FRONT-DESK"
           "host name: " + [System.Net.Dns]::GetHostName()
-          # The agent's status check reads the short Windows name from
-          # COMPUTERNAME instead, and the page matches the two. A real PC has
-          # one name for both; a user variable reaches the agent through
-          # Explorer, which the installer starts it through.
-          [Environment]::SetEnvironmentVariable("COMPUTERNAME", "FRONT-DESK", "User")
           New-Item -ItemType Directory -Force -Path C:\demo | Out-Null
           # Windows 11 has Cascadia Mono, which the agent shows the computer's
           # name in; this server edition has neither it nor Consolas, and
@@ -90,7 +85,6 @@ jobs:
         shell: pwsh
         env:
           DEMO_SESSION: ${{ secrets.DEMO_SESSION }}
-          COMPUTERNAME: FRONT-DESK
         run: |
           New-Item -ItemType Directory -Force -Path out | Out-Null
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File demo\record-setup.ps1 -Setup C:\demo\setup.exe -OutDir (Resolve-Path out)
