@@ -90,6 +90,9 @@ export default function App() {
         error: e.error ?? null,
       };
       setActivity((prev) => [item, ...prev].slice(0, 25));
+      // The Test print button reports its own result; without this a test
+      // card raised two notices at once. (lib.rs names these "Test print".)
+      if (e.jobName === "Test print") return;
       if (e.ok) {
         toast.show({
           tone: "success",
