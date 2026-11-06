@@ -6,10 +6,12 @@ Windows pass and a new window. Existing installs get it from the in-app
 update banner.
 
 ### New window
-- **One status card, drawn as the computer's own badge.** It says whether
-  badges will print and, if not, the one thing to do: pair this computer,
-  plug in a printer, restart the agent. A colour band and light show the
-  state, and the computer's name sits where a badge number would go.
+- **One status card, drawn as the computer's own badge** on a lanyard,
+  with the badger as its photo. It says whether badges will print and, if
+  not, the one thing to do: pair this computer, plug in a printer, restart
+  the agent. A colour band and light show the state, the badger waits in
+  grey until things are ready, and the computer's name sits where a badge
+  number would go. The tray icon's tooltip says the same thing.
 - **It knows whether this computer is paired.** The agent already polls
   BadgeBadger; the card now shows what BadgeBadger said ("Connected to
   BadgeBadger", "Not connected yet", "Can't reach BadgeBadger"). Coming
@@ -44,6 +46,10 @@ update banner.
   before.
 
 ### Fixed
+- Reinstalling turns start-at-sign-in back on. Uninstalling removed the
+  sign-in entry but left the agent's note that it had set it up once, so a
+  reinstall never re-enabled it. The uninstaller now clears the note too.
+  Updates never touched either.
 - A printer with a long name no longer adds a sideways scrollbar to the
   window.
 - The maximize button is off; the window has a fixed size.
