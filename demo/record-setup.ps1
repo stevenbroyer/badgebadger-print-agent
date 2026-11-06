@@ -177,6 +177,10 @@ try {
     [void][Mouse]::MoveWindow($agent, $ax, $ay, $aw, $ah, $true)
     [Win]::Topmost($agent, $true)
     Write-Host ("agent shows Not connected yet: " + (Agent-Has $agent "Not connected yet" 30))
+    try {
+        $health = Invoke-RestMethod -Uri "http://127.0.0.1:9988/health" -TimeoutSec 5
+        Write-Host ("agent reports " + $health.hostname + ", id " + $health.agentId)
+    } catch { Write-Host "no answer from the agent's /health" }
     Start-Sleep -Milliseconds 800
 
     if ($SessionJson) {

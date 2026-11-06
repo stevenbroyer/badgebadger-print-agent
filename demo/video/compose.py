@@ -216,8 +216,18 @@ finish, find, close = cap(cl, "Click Finish"), cap(cl, "It finds your card print
 # trimmed); push in on the agent's Badge printer card for choosing the
 # printer and the test card; out to the whole window to close it.
 near = (1.6, agent_x, agent_top + 480)
-cloud_cam = Camera([(0, 1.45, 718, 485), (finish + 4.6, 1.45, 718, 485), (find - 0.8, 1.0, *mid),
-                    (find + 0.3, 1.0, *mid), (find + 1.3, *near), (close - 0.9, *near), (close + 0.1, 1.0, *mid)])
+if pairing:
+    # Pairing, with the agent on the left and Edge on the right: in on the
+    # agent's status card, across to the pairing page (its prompt to reach
+    # the agent shows over the same view), back to the agent once it's ready.
+    pair, web, back = cap(cl, "Pair it"), cap(cl, "BadgeBadger opens"), cap(cl, "Back in the agent")
+    on_agent, on_page = (1.7, 400, 300), (1.55, 960, 443)
+    keys = [(pair - 0.8, 1.0, *mid), (pair + 0.2, 1.0, *mid), (pair + 1.4, *on_agent), (web + 0.2, *on_agent),
+            (web + 1.4, *on_page), (back - 0.9, *on_page), (back + 0.3, *on_agent), (find + 0.2, *on_agent)]
+else:
+    keys = [(find - 0.8, 1.0, *mid), (find + 0.3, 1.0, *mid)]
+cloud_cam = Camera([(0, 1.45, 718, 485), (finish + 4.6, 1.45, 718, 485), *keys,
+                    (find + 1.3, *near), (close - 0.9, *near), (close + 0.1, 1.0, *mid)])
 for n, (a, b) in enumerate(cuts):
     parts.append(segment(f"setup{n}", cloud_dir / "setup-raw.mp4", cl, a, b, cloud_cam))
 parts.append(still("end", work / "end.png", 4.2))
