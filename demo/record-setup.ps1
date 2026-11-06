@@ -79,6 +79,27 @@ function Click-Edge([string]$Match, [string]$Text) {
     Click-At ([int]($r.sx + $border + $r.x)) ([int]($r.sy + $r.ch - $border + $r.y))
 }
 
+# A button in Edge's own interface, such as a permission prompt, which is
+# a window of its own: its screen rectangle, or $null.
+function Edge-Button([string]$Name) {
+    $ids = @(Get-Process msedge -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })
+    $A = [System.Windows.Automation.AutomationElement]
+    $byName = New-Object System.Windows.Automation.PropertyCondition ($A::NameProperty), $Name
+    $isButton = New-Object System.Windows.Automation.PropertyCondition ($A::ControlTypeProperty), ([System.Windows.Automation.ControlType]::Button)
+    $cond = New-Object System.Windows.Automation.AndCondition -ArgumentList (,[System.Windows.Automation.Condition[]]@($byName, $isButton))
+    try {
+        foreach ($w in $A::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)) {
+            if ($ids -notcontains $w.Current.ProcessId) { continue }
+            $el = $w.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $cond)
+            if ($el) {
+                $r = $el.Current.BoundingRectangle
+                if (-not $r.IsEmpty -and $r.Width -gt 0) { return $r }
+            }
+        }
+    } catch {}
+    return $null
+}
+
 $SessionJson = $env:DEMO_SESSION
 if ($SessionJson) {
     # Edge is signed in to the demo school before the recording starts, so
@@ -173,6 +194,25 @@ try {
         # list a second later; either one means it worked.
         $deadline = (Get-Date).AddSeconds(20)
         while (-not ((Has-Text 9333 "/pair-agent" "Computer paired") -or (Cdp 9333 "/settings/printers/agents" "true")) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 300 }
+        # On the computers list the page looks for the agent, and Edge first
+        # asks whether the site may reach it. Every real setup meets this.
+        $allow = $null
+        $deadline = (Get-Date).AddSeconds(15)
+        while (-not $allow -and (Get-Date) -lt $deadline) { $allow = Edge-Button "Allow"; if (-not $allow) { Start-Sleep -Milliseconds 300 } }
+        if ($allow) {
+            Caption "Your browser asks to connect to the agent. Click Allow" "Pair"
+            Start-Sleep -Milliseconds 2400
+            Click-At ([int]($allow.X + $allow.Width / 2)) ([int]($allow.Y + $allow.Height / 2))
+            # The page would look again by itself in a few seconds; Try
+            # again looks now.
+            Start-Sleep -Milliseconds 1200
+            if (Has-Text 9333 "/settings/printers/agents" "No print agent on this computer") { Click-Edge "/settings/printers/agents" "Try again" }
+            $deadline = (Get-Date).AddSeconds(15)
+            while ((Has-Text 9333 "/settings/printers/agents" "No print agent on this computer") -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 300 }
+            Write-Host ("page sees the agent: " + (-not (Has-Text 9333 "/settings/printers/agents" "No print agent on this computer")))
+        } else {
+            Write-Host "no Allow prompt in Edge"
+        }
         Start-Sleep -Milliseconds 1600
         # Coming back to the agent re-checks the connection straight away.
         $o = [Mouse]::ClientOrigin($agent)
