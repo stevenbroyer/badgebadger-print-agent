@@ -1,36 +1,76 @@
 name: demo-video
 
-# Records the agent's setup on a clean Windows machine for the docs video.
-# Runs only from the demo-video branch and never touches releases.
+# Records the agent's first setup on a clean Windows machine for the docs
+# video: install, pairing (when DEMO_SIGNIN_URL holds a one-time sign-in
+# link), choosing the card printer, a test print. Runs only from the
+# demo-video branch and never touches releases. The recording and its
+# caption log come back as an artifact.
 
 on:
   push:
     branches: [demo-video]
 
 jobs:
-  probe:
+  record:
     runs-on: windows-latest
     steps:
-      - name: Look at the desktop
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Set up the screen, Edge and a card printer
+        shell: pwsh
+        run: |
+          Set-DisplayResolution -Width 1920 -Height 1080 -Force
+          # A clean Edge: no first-run pages, prompts, sidebar or sign-in nags.
+          $edge = "HKLM:\SOFTWARE\Policies\Microsoft\Edge"
+          New-Item -Path $edge -Force | Out-Null
+          $dword = @{
+            HideFirstRunExperience = 1; DefaultBrowserSettingEnabled = 0; BrowserSignin = 0
+            ShowRecommendationsEnabled = 0; HubsSidebarEnabled = 0; PersonalizationReportingEnabled = 0
+            StartupBoostEnabled = 0; EdgeShoppingAssistantEnabled = 0; PromotionalTabsEnabled = 0
+            AutoImportAtFirstRun = 4; SyncDisabled = 1; NewTabPageHideDefaultTopSites = 1
+            ShowMicrosoftRewards = 0; EdgeCollectionsEnabled = 0; TranslateEnabled = 0
+          }
+          foreach ($k in $dword.Keys) { New-ItemProperty -Path $edge -Name $k -Value $dword[$k] -PropertyType DWord -Force | Out-Null }
+          # A card printer that prints into a file, so a test card is real
+          # but goes nowhere.
+          New-Item -ItemType Directory -Force -Path C:\demo | Out-Null
+          Add-PrinterPort -Name "C:\demo\test-card.pdf"
+          Add-Printer -Name "Zebra ZC300 Card Printer" -DriverName "Microsoft Print To PDF" -PortName "C:\demo\test-card.pdf"
+          (Get-CimInstance Win32_Printer -Filter "Name='Microsoft Print to PDF'") | Invoke-CimMethod -MethodName SetDefaultPrinter | Out-Null
+          Get-Printer | Select-Object Name, DriverName, PortName | Format-Table -AutoSize
+          choco install ffmpeg --no-progress -y | Out-Null
+          $ff = Get-ChildItem C:\ProgramData\chocolatey\lib\ffmpeg -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+          "FFMPEG=$($ff.FullName)" | Add-Content $env:GITHUB_ENV
+          Invoke-WebRequest "https://github.com/stevenbroyer/badgebadger-print-agent/releases/download/v0.7.0/BadgeBadger.Print.Agent_0.7.0_x64-setup.exe" -OutFile C:\demo\setup.exe
+          (Get-AuthenticodeSignature C:\demo\setup.exe).SignerCertificate.Subject
+
+      - name: Record the setup
+        shell: pwsh
+        env:
+          DEMO_SIGNIN_URL: ${{ secrets.DEMO_SIGNIN_URL }}
+        run: |
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File demo\record-setup.ps1 -Setup C:\demo\setup.exe -OutDir (Resolve-Path out) -SignInUrl "$env:DEMO_SIGNIN_URL"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "test card file: " + (Test-Path C:\demo\test-card.pdf)
+
+      - name: Screenshot the desktop
+        if: always()
         shell: pwsh
         run: |
           Add-Type -AssemblyName System.Windows.Forms, System.Drawing
-          "OS: " + (Get-CimInstance Win32_OperatingSystem).Caption
-          "Screen before: " + [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-          try { Set-DisplayResolution -Width 1920 -Height 1080 -Force -ErrorAction Stop; "Set-DisplayResolution ok" } catch { "Set-DisplayResolution failed: $_" }
-          Start-Sleep -Seconds 3
-          "Screen after: " + [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-          "Session: " + [Environment]::UserInteractive + " user " + $env:USERNAME
-          "Edge: " + (Test-Path "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe")
-          "WebView2: " + ((Get-ItemProperty "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" -ErrorAction SilentlyContinue).pv)
-          "Printer drivers:"; Get-PrinterDriver | Select-Object -ExpandProperty Name
-          "Printers:"; Get-Printer | Select-Object -ExpandProperty Name
+          New-Item -ItemType Directory -Force -Path out | Out-Null
           $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
           $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
           $g = [System.Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen(0, 0, 0, 0, $bmp.Size); $g.Dispose()
-          New-Item -ItemType Directory -Force -Path probe | Out-Null
-          $bmp.Save("probe\desktop.png"); $bmp.Dispose()
+          $bmp.Save("out\desktop-end.png"); $bmp.Dispose()
+
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: probe
-          path: probe/
+          name: setup-recording
+          path: out/

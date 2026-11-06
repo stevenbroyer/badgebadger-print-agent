@@ -1,0 +1,175 @@
+# Records a first setup of the agent on a clean Windows machine: install,
+# pairing with a BadgeBadger account (when a one-time sign-in link is given),
+# choosing the card printer, and a test print. The cursor glides to each
+# button and really clicks it.
+param(
+    [string]$Setup, [string]$OutDir, [string]$SignInUrl = "",
+    [int]$X = 320, [int]$Y = 116, [int]$W = 1280, [int]$H = 800
+)
+$ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "ui.ps1")
+. (Join-Path $PSScriptRoot "recorder.ps1")
+$cdp = Join-Path $PSScriptRoot "cdp.mjs"
+
+function Cdp([int]$Port, [string]$Match, [string]$Expr) {
+    $out = & node $cdp $Port $Match $Expr
+    if (-not $out -or $out -eq "null") { return $null }
+    return ($out | ConvertFrom-Json)
+}
+
+# Centre of the first enabled button or link whose visible text is $Text,
+# in page pixels, plus the window metrics to turn it into screen pixels.
+function Find-Text([int]$Port, [string]$Match, [string]$Text) {
+    $t = ConvertTo-Json $Text
+    $expr = "(() => { const el = [...document.querySelectorAll('button, a, summary')].find(e => (e.innerText || '').trim() === $t && !e.disabled); if (!el) return null; el.scrollIntoView({ block: 'center' }); const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2, sx: window.screenX, sy: window.screenY, ch: window.outerHeight - window.innerHeight, cw: window.outerWidth - window.innerWidth }; })()"
+    return Cdp $Port $Match $expr
+}
+
+function Has-Text([int]$Port, [string]$Match, [string]$Text) {
+    $t = ConvertTo-Json $Text
+    return [bool](Cdp $Port $Match "document.body ? document.body.innerText.includes($t) : false")
+}
+
+function Wait-Text([int]$Port, [string]$Match, [string]$Text, [int]$Seconds = 30) {
+    $deadline = (Get-Date).AddSeconds($Seconds)
+    while ((Get-Date) -lt $deadline) {
+        if (Has-Text $Port $Match $Text) { return $true }
+        Start-Sleep -Milliseconds 400
+    }
+    return $false
+}
+
+# The agent's webview fills its window's client area.
+function Click-Agent([IntPtr]$Agent, [string]$Text) {
+    $deadline = (Get-Date).AddSeconds(20)
+    $r = $null
+    while (-not $r -and (Get-Date) -lt $deadline) {
+        $r = Find-Text 9229 "" $Text
+        if (-not $r) { Start-Sleep -Milliseconds 400 }
+    }
+    if (-not $r) { throw "no '$Text' in the agent window" }
+    $o = [Mouse]::ClientOrigin($Agent)
+    Click-At ([int]($o.X + $r.x)) ([int]($o.Y + $r.y))
+}
+
+# Edge: the page sits below the tab strip and the address bar.
+function Click-Edge([string]$Match, [string]$Text) {
+    $deadline = (Get-Date).AddSeconds(20)
+    $r = $null
+    while (-not $r -and (Get-Date) -lt $deadline) {
+        $r = Find-Text 9333 $Match $Text
+        if (-not $r) { Start-Sleep -Milliseconds 400 }
+    }
+    if (-not $r) { throw "no '$Text' in Edge" }
+    $border = [int]($r.cw / 2)
+    Click-At ([int]($r.sx + $border + $r.x)) ([int]($r.sy + $r.ch - $border + $r.y))
+}
+
+if ($SignInUrl) {
+    # Signed in before the recording starts, so the sign-in link never shows.
+    Start-Process -FilePath "msedge.exe" -ArgumentList @(
+        "--remote-debugging-port=9333", "--no-first-run", "--no-default-browser-check",
+        "--window-position=832,176", "--window-size=736,680", $SignInUrl)
+    $u = $null
+    $deadline = (Get-Date).AddSeconds(60)
+    while ((Get-Date) -lt $deadline) {
+        $u = Cdp 9333 "badgebadger.app" "location.href"
+        if ($u -and $u -notmatch "/auth/|/login") { break }
+        Start-Sleep -Milliseconds 700
+    }
+    if (-not $u -or $u -match "/auth/|/login") { throw "the sign-in link didn't sign in" }
+    Write-Host "signed in"
+}
+
+$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=9229"
+$backdrop = Start-Backdrop $X $Y $W $H
+$rec = Start-Recording (Join-Path $OutDir "setup-raw.mp4") $X $Y $W $H
+$agent = [IntPtr]::Zero
+$edge = [IntPtr]::Zero
+try {
+    [void][Mouse]::SetCursorPos($X + $W - 180, $Y + $H - 140)
+    Start-Sleep -Milliseconds 1200
+    Caption "Run the installer you downloaded" "Install"
+    Start-Process -FilePath $Setup
+    $setupWin = Wait-Window -Contains "Setup" -TimeoutSec 40
+    if ($setupWin -eq [IntPtr]::Zero) { throw "the installer window never appeared" }
+    [Win]::Topmost($setupWin, $true)
+
+    $seen = @{}
+    for ($step = 0; $step -lt 16; $step++) {
+        Start-Sleep -Milliseconds 1600
+        $setupWin = [Win]::Find("Setup", $null, $null)
+        if ($setupWin -eq [IntPtr]::Zero) { break }
+        [Win]::Topmost($setupWin, $true)
+        if (-not [Win]::ButtonEnabled($setupWin, 1)) {
+            if (-not $seen["installing"]) { $seen["installing"] = $true; Caption "It installs in a few seconds" "Install" }
+            continue
+        }
+        $label = [Win]::ButtonText($setupWin, 1).Replace("&", "")
+        if ((Find-Element $setupWin "Choose Install Location") -and -not $seen["location"]) {
+            $seen["location"] = $true
+            Caption "It installs just for you, so there's no admin password" "Install"
+            Start-Sleep -Milliseconds 1800
+        }
+        if ($label -eq "Finish") { Caption "Click Finish, and the agent opens" "Install"; Start-Sleep -Milliseconds 1400 }
+        $c = Button-Center $setupWin 1
+        Click-At $c[0] $c[1]
+        if ($label -eq "Finish") {
+            $deadline = (Get-Date).AddSeconds(8)
+            while ([Win]::Find("Setup", $null, $null) -ne [IntPtr]::Zero -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 250 }
+            break
+        }
+    }
+
+    $deadline = (Get-Date).AddSeconds(40)
+    while (($agent = [Win]::FindAgent()) -eq [IntPtr]::Zero -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 250 }
+    if ($agent -eq [IntPtr]::Zero) { throw "the agent window never appeared" }
+    if ($SignInUrl) { [void][Mouse]::MoveWindow($agent, 352, 176, 456, 680, $true) }
+    [Win]::Topmost($agent, $true)
+    [void](Wait-Text 9229 "" "Not connected yet" 30)
+    Start-Sleep -Milliseconds 800
+
+    if ($SignInUrl) {
+        Caption "Pair it with your BadgeBadger account" "Pair"
+        Start-Sleep -Milliseconds 2200
+        Click-Agent $agent "Pair this computer"
+        $deadline = (Get-Date).AddSeconds(30)
+        while (-not (Has-Text 9333 "/pair-agent" "Confirm pair") -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 400 }
+        $edge = Wait-Window -Contains "Edge" -TimeoutSec 10
+        if ($edge -ne [IntPtr]::Zero) { [void][Mouse]::MoveWindow($edge, 832, 176, 736, 680, $true); [Win]::Topmost($edge, $true) }
+        Caption "BadgeBadger opens in your browser. Confirm this computer" "Pair"
+        Start-Sleep -Milliseconds 2600
+        Click-Edge "/pair-agent" "Confirm pair"
+        [void](Wait-Text 9333 "" "Computer paired" 20)
+        Start-Sleep -Milliseconds 1600
+        # Coming back to the agent re-checks the connection straight away.
+        $o = [Mouse]::ClientOrigin($agent)
+        Click-At ($o.X + 228) ($o.Y + 30) 500
+        [void](Wait-Text 9229 "" "Ready to print" 30)
+        Caption "Back in the agent: ready to print" "Pair"
+        Start-Sleep -Milliseconds 2600
+        if ($edge -ne [IntPtr]::Zero) { [Win]::Topmost($edge, $false) }
+    }
+
+    Caption "It finds your card printer. Click Use it for badges" "Badge printer"
+    Start-Sleep -Milliseconds 2400
+    Click-Agent $agent "Use it for badges"
+    Start-Sleep -Milliseconds 2200
+    Caption "Then print a test card to check" "Badge printer"
+    Start-Sleep -Milliseconds 1600
+    Click-Agent $agent "Test print"
+    Start-Sleep -Milliseconds 3200
+    Caption "Done. Badges you print in BadgeBadger come out here" "Badge printer"
+    Start-Sleep -Milliseconds 3800
+    Caption "Close the window and it keeps running in the tray" "Badge printer"
+    Start-Sleep -Milliseconds 1200
+    $wr = New-Object Mouse+RECT
+    [void][Mouse]::GetWindowRect($agent, [ref]$wr)
+    Click-At ($wr.R - 24) ($wr.T + 16) 600
+    Start-Sleep -Milliseconds 2200
+} finally {
+    Save-Captions (Join-Path $OutDir "setup-captions.json")
+    Stop-Recording $rec
+    if ($agent -ne [IntPtr]::Zero) { [Win]::Topmost($agent, $false) }
+    Stop-Process -Id $backdrop.Id -Force -ErrorAction SilentlyContinue
+}
