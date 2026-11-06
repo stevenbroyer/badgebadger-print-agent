@@ -1,8 +1,8 @@
 name: demo-video
 
 # Records the agent's first setup on a clean Windows machine for the docs
-# video: install, pairing (when DEMO_SIGNIN_URL holds a one-time sign-in
-# link), choosing the card printer, a test print. Runs only from the
+# video: install, pairing (when DEMO_SESSION holds a signed-in session
+# for the demo school), choosing the card printer, a test print. Runs only from the
 # demo-video branch and never touches releases. The recording and its
 # caption log come back as an artifact.
 
@@ -63,10 +63,10 @@ jobs:
       - name: Record the setup
         shell: pwsh
         env:
-          DEMO_SIGNIN_URL: ${{ secrets.DEMO_SIGNIN_URL }}
+          DEMO_SESSION: ${{ secrets.DEMO_SESSION }}
         run: |
           New-Item -ItemType Directory -Force -Path out | Out-Null
-          powershell.exe -NoProfile -ExecutionPolicy Bypass -File demo\record-setup.ps1 -Setup C:\demo\setup.exe -OutDir (Resolve-Path out) -SignInUrl "$env:DEMO_SIGNIN_URL"
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File demo\record-setup.ps1 -Setup C:\demo\setup.exe -OutDir (Resolve-Path out)
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           "test card file: " + (Test-Path C:\demo\test-card.pdf)
 

@@ -1,9 +1,9 @@
 # Records a first setup of the agent on a clean Windows machine: install,
-# pairing with a BadgeBadger account (when a one-time sign-in link is given),
-# choosing the card printer, and a test print. The cursor glides to each
-# button and really clicks it.
+# pairing with a BadgeBadger account (when DEMO_SESSION holds a signed-in
+# session for the demo school), choosing the card printer, and a test print.
+# The cursor glides to each button and really clicks it.
 param(
-    [string]$Setup, [string]$OutDir, [string]$SignInUrl = "",
+    [string]$Setup, [string]$OutDir,
     [int]$X = 240, [int]$Y = 66, [int]$W = 1440, [int]$H = 900
 )
 $ErrorActionPreference = "Stop"
@@ -77,20 +77,27 @@ function Click-Edge([string]$Match, [string]$Text) {
     Click-At ([int]($r.sx + $border + $r.x)) ([int]($r.sy + $r.ch - $border + $r.y))
 }
 
-if ($SignInUrl) {
-    # Signed in before the recording starts, so the sign-in link never shows.
+$SessionJson = $env:DEMO_SESSION
+if ($SessionJson) {
+    # Edge is signed in to the demo school before the recording starts, so
+    # no sign-in screen shows: the session's cookies go in on the site's own
+    # origin, then the dashboard loads.
     Start-Process -FilePath "msedge.exe" -ArgumentList @(
         "--remote-debugging-port=9333", "--no-first-run", "--no-default-browser-check",
-        "--window-position=832,126", "--window-size=736,680", $SignInUrl)
+        "--window-position=832,126", "--window-size=736,680", "https://hq.badgebadger.app/login")
     $u = $null
     $deadline = (Get-Date).AddSeconds(60)
-    while ((Get-Date) -lt $deadline) {
-        $u = Cdp 9333 "badgebadger.app" "location.href"
-        if ($u -and $u -notmatch "/auth/|/login") { break }
-        Start-Sleep -Milliseconds 700
+    while (-not $u -and (Get-Date) -lt $deadline) { $u = Cdp 9333 "badgebadger.app" "location.href"; if (-not $u) { Start-Sleep -Milliseconds 700 } }
+    if (-not $u) { throw "Edge never reached BadgeBadger" }
+    foreach ($c in ($SessionJson | ConvertFrom-Json).cookies) {
+        $cookie = ConvertTo-Json "$($c.name)=$($c.value); path=/; secure; samesite=lax; max-age=7200"
+        [void](Cdp 9333 "badgebadger.app" "document.cookie = $cookie; true")
     }
-    if (-not $u -or $u -match "/auth/|/login") { throw "the sign-in link didn't sign in" }
-    Write-Host "signed in"
+    [void](Cdp 9333 "badgebadger.app" "location.href = 'https://hq.badgebadger.app/dashboard'; true")
+    $deadline = (Get-Date).AddSeconds(40)
+    do { Start-Sleep -Milliseconds 800; $u = Cdp 9333 "badgebadger.app" "location.href" } while ((-not $u -or $u -match "/login") -and (Get-Date) -lt $deadline)
+    if (-not $u -or $u -match "/login") { throw "the demo session didn't sign in" }
+    Write-Host "Edge signed in to the demo school"
 }
 
 $backdrop = Start-Backdrop $X $Y $W $H
@@ -140,13 +147,13 @@ try {
     $wr0 = New-Object Mouse+RECT
     [void][Mouse]::GetWindowRect($agent, [ref]$wr0)
     $aw, $ah = ($wr0.R - $wr0.L), ($wr0.B - $wr0.T)
-    $ax = if ($SignInUrl) { 352 } else { $X + [int](($W - $aw) / 2) }
+    $ax = if ($SessionJson) { 352 } else { $X + [int](($W - $aw) / 2) }
     [void][Mouse]::MoveWindow($agent, $ax, $Y + 60, $aw, $ah, $true)
     [Win]::Topmost($agent, $true)
     Write-Host ("agent shows Not connected yet: " + (Agent-Has $agent "Not connected yet" 30))
     Start-Sleep -Milliseconds 800
 
-    if ($SignInUrl) {
+    if ($SessionJson) {
         Caption "Pair it with your BadgeBadger account" "Pair"
         Start-Sleep -Milliseconds 2200
         Click-Agent $agent "Pair this computer"
