@@ -35,6 +35,12 @@ jobs:
             ShowMicrosoftRewards = 0; EdgeCollectionsEnabled = 0; TranslateEnabled = 0
           }
           foreach ($k in $dword.Keys) { New-ItemProperty -Path $edge -Name $k -Value $dword[$k] -PropertyType DWord -Force | Out-Null }
+          # The installer starts the agent through Windows, so an environment
+          # variable wouldn't reach it. WebView2's own policy does: it opens
+          # the agent's page to the recording script for finding buttons.
+          $wv = "HKLM:\SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments"
+          New-Item -Path $wv -Force | Out-Null
+          New-ItemProperty -Path $wv -Name "badgebadger-print-agent.exe" -Value "--remote-debugging-port=9229" -PropertyType String -Force | Out-Null
           # A card printer that prints into a file, so a test card is real
           # but goes nowhere.
           New-Item -ItemType Directory -Force -Path C:\demo | Out-Null
