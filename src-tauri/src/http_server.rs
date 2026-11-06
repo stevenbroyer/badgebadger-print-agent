@@ -51,6 +51,7 @@ use axum::{
     response::{IntoResponse, Json, Response},
     routing::{get, post},
 };
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 use tokio::sync::Mutex;
@@ -351,8 +352,14 @@ fn platform_str() -> &'static str {
     }
 }
 
-fn build_health_response(badge_printer: Option<&str>) -> HealthResponse {
-    let hostname = std::env::var("COMPUTERNAME") // Windows
+// This computer's name, read once: what /health reports as the hostname and
+// the agent id, which the web app files a pairing under, and what the
+// pairing link and the window show. All three must agree. On Windows the
+// DNS host name keeps its case and length while COMPUTERNAME is upper case
+// and at most 15 characters, so a computer named "Front-Desk" was paired
+// under one and looked up under the other, and never found.
+static COMPUTER_NAME: Lazy<String> = Lazy::new(|| {
+    std::env::var("COMPUTERNAME") // Windows
         .or_else(|_| std::env::var("HOSTNAME")) // most Unix shells
         .or_else(|_| {
             // Fallback for macOS where neither is set in the
@@ -362,7 +369,15 @@ fn build_health_response(badge_printer: Option<&str>) -> HealthResponse {
                 .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
                 .map_err(|_| std::env::VarError::NotPresent)
         })
-        .unwrap_or_else(|_| "unknown".to_string());
+        .unwrap_or_else(|_| "unknown".to_string())
+});
+
+pub(crate) fn computer_name() -> String {
+    COMPUTER_NAME.clone()
+}
+
+fn build_health_response(badge_printer: Option<&str>) -> HealthResponse {
+    let hostname = computer_name();
 
     HealthResponse {
         ok: true,

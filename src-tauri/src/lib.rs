@@ -94,15 +94,8 @@ async fn get_status(state: tauri::State<'_, SharedState>) -> Result<AgentStatus,
         printers,
         helper_installed: printer::helper_installed(),
         connection,
-        computer_name: computer_name(),
+        computer_name: http_server::computer_name(),
     })
-}
-
-fn computer_name() -> String {
-    hostname::get()
-        .ok()
-        .and_then(|s| s.into_string().ok())
-        .unwrap_or_else(|| "this-computer".to_string())
 }
 
 // Picks the printer a badge goes to when BadgeBadger doesn't name one, or
@@ -189,7 +182,9 @@ async fn get_pair_url(state: tauri::State<'_, SharedState>) -> Result<String, St
     let token = s.pairing_token.clone();
     drop(s);
 
-    let hostname = computer_name();
+    // The same name /health reports, so the web app finds this pairing
+    // when it next looks for the agent.
+    let hostname = http_server::computer_name();
 
     let platform = if cfg!(target_os = "windows") {
         "windows"
