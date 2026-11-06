@@ -1,0 +1,26 @@
+﻿[
+    {
+        "start":  1.21,
+        "end":  2.8,
+        "text":  "Double-click the installer you downloaded",
+        "chapter":  "Download"
+    },
+    {
+        "start":  2.8,
+        "end":  8.27,
+        "text":  "Windows may warn you while the app is new",
+        "chapter":  "Download"
+    },
+    {
+        "start":  8.27,
+        "end":  12.89,
+        "text":  "Click More info: it names the verified publisher, Steven Broyer",
+        "chapter":  "Download"
+    },
+    {
+        "start":  12.89,
+        "end":  16.52,
+        "text":  "Then click Run anyway",
+        "chapter":  "Download"
+    }
+]
