@@ -93,6 +93,7 @@ pub async fn serve(
         pairing_token: Arc::new(pairing_token),
         allowed_origins: Arc::new(allowed_origins),
         rate_limiter: Arc::new(RateLimiter::new()),
+        state: state.clone(),
     };
 
     // /print sits behind origin + auth + rate-limit middleware.
@@ -155,6 +156,8 @@ struct AgentCtx {
     pairing_token: Arc<String>,
     allowed_origins: Arc<Vec<String>>,
     rate_limiter: Arc<RateLimiter>,
+    // For the badge printer picked in the agent window.
+    state: Arc<Mutex<crate::AgentState>>,
 }
 
 fn resolve_allowed_origins() -> Vec<String> {
@@ -322,7 +325,9 @@ struct HealthResponse {
     /// available. Drives the "PDF helper missing" warning in the
     /// agent picker UI.
     helper_installed: bool,
-    /// OS default printer, if set.
+    /// Where a job with no `printer` goes: the badge printer picked in the
+    /// agent if it's installed, else the OS default. The web app labels it
+    /// as this computer's default.
     default_printer: Option<String>,
     /// Every printer the agent can see.
     printers: Vec<String>,
@@ -346,7 +351,7 @@ fn platform_str() -> &'static str {
     }
 }
 
-fn build_health_response() -> HealthResponse {
+fn build_health_response(badge_printer: Option<&str>) -> HealthResponse {
     let hostname = std::env::var("COMPUTERNAME") // Windows
         .or_else(|_| std::env::var("HOSTNAME")) // most Unix shells
         .or_else(|_| {
@@ -367,20 +372,21 @@ fn build_health_response() -> HealthResponse {
         agent_id: hostname.clone(),
         hostname,
         helper_installed: printer::helper_installed(),
-        default_printer: printer::default_printer().ok().flatten(),
+        default_printer: printer::effective_default(badge_printer).ok().flatten(),
         printers: printer::list_printers().unwrap_or_default(),
         auth_required: true,
         protocol: "1",
     }
 }
 
-async fn health() -> impl IntoResponse {
+async fn health(State(ctx): State<AgentCtx>) -> impl IntoResponse {
+    let badge_printer = ctx.state.lock().await.badge_printer.clone();
     // helper_installed / default_printer / list_printers and the hostname
     // fallback all shell out synchronously (lpstat, hostname). /health is
     // unauthenticated, so running them inline would let a local process — or
     // a site the operator visits — flood /health and starve tokio's worker
     // threads (M2). Push the blocking work to the blocking pool.
-    let resp = tokio::task::spawn_blocking(build_health_response)
+    let resp = tokio::task::spawn_blocking(move || build_health_response(badge_printer.as_deref()))
         .await
         .unwrap_or_else(|_| HealthResponse {
             ok: true,
@@ -443,9 +449,10 @@ async fn print_handler(
         ));
     }
 
+    let badge_printer = ctx.state.lock().await.badge_printer.clone();
     let printer_name = match q.printer.as_deref() {
         Some(p) if !p.trim().is_empty() => p.to_string(),
-        _ => printer::default_printer()
+        _ => printer::effective_default(badge_printer.as_deref())
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
             .ok_or_else(|| {
                 (

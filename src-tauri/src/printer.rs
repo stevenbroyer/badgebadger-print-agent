@@ -365,6 +365,18 @@ pub fn default_printer() -> anyhow::Result<Option<String>> {
     }
 }
 
+/// Where a job goes when the caller doesn't name a printer: the badge
+/// printer picked in the agent while it's still installed, else the OS
+/// default. On macOS and Linux this shells out to lpstat.
+pub fn effective_default(badge_printer: Option<&str>) -> anyhow::Result<Option<String>> {
+    if let Some(chosen) = badge_printer {
+        if list_printers().unwrap_or_default().iter().any(|p| p == chosen) {
+            return Ok(Some(chosen.to_string()));
+        }
+    }
+    default_printer()
+}
+
 pub async fn print_pdf_bytes(bytes: &[u8], printer_name: &str) -> anyhow::Result<()> {
     let temp = NamedTempFile::with_suffix(".pdf")?;
     let path: PathBuf = temp.path().to_path_buf();

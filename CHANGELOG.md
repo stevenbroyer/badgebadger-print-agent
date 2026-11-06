@@ -1,5 +1,53 @@
 # Changelog
 
+## 0.7.0
+
+Windows pass and a new window. Existing installs get it from the in-app
+update banner.
+
+### New window
+- **One status card, drawn as the computer's own badge.** It says whether
+  badges will print and, if not, the one thing to do: pair this computer,
+  plug in a printer, restart the agent. A colour band and light show the
+  state, and the computer's name sits where a badge number would go.
+- **It knows whether this computer is paired.** The agent already polls
+  BadgeBadger; the card now shows what BadgeBadger said ("Connected to
+  BadgeBadger", "Not connected yet", "Can't reach BadgeBadger"). Coming
+  back to the window after pairing in the browser checks again right away.
+- **Badge printer.** Pick the printer badges go to when BadgeBadger doesn't
+  name one, instead of changing the computer's default (usually the office
+  paper printer). Card printers are recognised by name, listed first, and
+  offered with "Use it for badges". The choice is saved in settings.json;
+  /health reports it as the default so the web app shows where badges go.
+- **Plain language.** The port, the pairing code, update checks and the
+  other details IT asks for moved into "Settings and troubleshooting".
+- **Recent prints** shows the last three badges, with a failed one's reason
+  in plain words.
+- The web app's own fonts (Outfit and DM Sans, bundled under the OFL) and
+  a broken Help link fixed: it now opens the troubleshooting guide.
+
+### Changed
+- **The Windows download is 12 MB instead of 216 MB.** The installer used to
+  carry Microsoft's full WebView2 runtime, which Windows 10 and 11 already
+  have. It now carries the small WebView2 setup that runs only on a PC
+  that's missing it, which needs an internet connection.
+- **Opening the agent while it's running shows the window it already has.**
+  A second launch used to start another copy that couldn't get port 9988,
+  so it said "Agent stopped" next to the copy that was working.
+- **On Windows the agent starts in the tray at sign-in** instead of opening
+  its window every morning. Opening it from the Start menu still shows the
+  window. Installs from before 0.7.0 switch over on their next launch,
+  unless launch on login is off.
+- **Signed Windows builds, once Azure Artifact Signing is set up.** CI signs
+  the app, the installer, the uninstaller and the MSI, and fails the build if
+  a signature doesn't check out. Without the settings it builds unsigned, as
+  before.
+
+### Fixed
+- A printer with a long name no longer adds a sideways scrollbar to the
+  window.
+- The maximize button is off; the window has a fixed size.
+
 ## 0.6.0 — 2026-07-10
 
 Brand + security + reliability pass. Existing installs update silently via the

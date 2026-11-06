@@ -1,52 +1,81 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
-import { StatusHero } from "./components/StatusHero";
-import { AutostartCallout } from "./components/AutostartCallout";
-import { ChecklistCard } from "./components/ChecklistCard";
-import { PairingCard } from "./components/PairingCard";
-import { PrinterCard } from "./components/PrinterCard";
-import { ActivityCard } from "./components/ActivityCard";
-import { SettingsCard } from "./components/SettingsCard";
+import { relaunch } from "@tauri-apps/plugin-process";
+import { StationCard, type StationAction, type StationTone } from "./components/StationCard";
+import { BadgePrinter } from "./components/BadgePrinter";
+import { RecentPrints } from "./components/RecentPrints";
+import { Troubleshooting } from "./components/Troubleshooting";
 import { Toaster, useToast } from "./components/Toaster";
 import { UpdateBanner, useUpdater } from "./components/UpdateBanner";
+import { useAutostart } from "./useAutostart";
 import type { AgentStatus, PrintEvent, ActivityItem } from "./types";
+
+const WEB_APP = "https://hq.badgebadger.app";
+const INSTALL_GUIDE = "https://badgebadger.app/docs/install-print-agent";
+const HELP = "https://badgebadger.app/docs/troubleshooting";
+
+type Station = {
+  tone: StationTone;
+  headline: string;
+  body: string;
+  action?: StationAction | undefined;
+};
 
 export default function App() {
   const [status, setStatus] = useState<AgentStatus | null>(null);
   const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [testing, setTesting] = useState(false);
-  const [selectedPrinter, setSelectedPrinter] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [pairing, setPairing] = useState(false);
   const toast = useToast();
   const updater = useUpdater();
+  const { autostart, enable: enableAutostart } = useAutostart();
 
-  // Poll status. Cheap (just a Tauri command, no IPC heavy lifting),
-  // and 1s is fast enough that printer add/remove from the OS is
-  // reflected in the UI within a moment without burning CPU.
-  useEffect(() => {
-    let cancelled = false;
-    async function refresh() {
-      try {
-        const next = await invoke<AgentStatus>("get_status");
-        if (!cancelled) setStatus(next);
-      } catch {
-        // Status fetch shouldn't fail in normal operation; if it
-        // does, leave the previous status visible rather than
-        // flicker to "unknown".
-      }
+  const refresh = useCallback(async () => {
+    try {
+      setStatus(await invoke<AgentStatus>("get_status"));
+    } catch {
+      // Status fetch shouldn't fail in normal operation; if it does,
+      // leave the previous status visible rather than flicker.
     }
-    void refresh();
-    const interval = setInterval(() => void refresh(), 1000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
   }, []);
 
-  // Live activity feed: Rust emits a `print` event whenever a job
-  // is dispatched (success or failure) to the local printer. We
-  // append to an in-memory ring buffer and surface a toast.
+  // Poll status. Cheap (just a Tauri command), and 1s is fast enough that
+  // a printer plugged in, or a pairing finished in the browser, shows up
+  // within a moment.
+  useEffect(() => {
+    void refresh();
+    const interval = setInterval(() => void refresh(), 1000);
+    return () => clearInterval(interval);
+  }, [refresh]);
+
+  // Coming back to the window, usually from pairing in the browser: ask
+  // BadgeBadger again now instead of after the poll loop's backoff.
+  const connection = status?.connection ?? null;
+  useEffect(() => {
+    function onFocus() {
+      if (connection !== "connected") void invoke("recheck_connection");
+    }
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [connection]);
+
+  // Say so once when a pairing started here goes through.
+  const wasConnected = useRef<boolean | null>(null);
+  useEffect(() => {
+    if (connection === null || connection === "checking") return;
+    const now = connection === "connected";
+    if (wasConnected.current === false && now) {
+      setPairing(false);
+      toast.show({ tone: "success", title: "Connected to BadgeBadger", body: "Badges can print here now." });
+    }
+    wasConnected.current = now;
+  }, [connection, toast]);
+
+  // Live activity feed: Rust emits a `print` event whenever a job is
+  // dispatched (success or failure) to the local printer.
   useEffect(() => {
     const unlistenPromise = listen<PrintEvent>("print", (event) => {
       const e = event.payload;
@@ -61,27 +90,14 @@ export default function App() {
         error: e.error ?? null,
       };
       setActivity((prev) => [item, ...prev].slice(0, 25));
-      // Prefer the structured employee/template label when we have
-      // it; the toast feels much more like a concierge and less like
-      // a print queue ("Sam Rivera printed" vs "badge-a1b2c3d4").
-      const toastTitle = e.employeeName
-        ? `Printed ${e.employeeName}`
-        : "Sent to printer";
-      const toastBody = e.employeeName
-        ? `${e.templateName ? `${e.templateName} · ` : ""}${e.printer}`
-        : `${e.printer}${e.jobName ? ` · ${e.jobName}` : ""}`;
       if (e.ok) {
         toast.show({
           tone: "success",
-          title: toastTitle,
-          body: toastBody,
+          title: e.employeeName ? `Printed ${e.employeeName}` : "Sent to the printer",
+          body: [e.employeeName ? e.templateName : e.jobName, e.printer].filter(Boolean).join(" · "),
         });
       } else {
-        toast.show({
-          tone: "error",
-          title: "Print failed",
-          body: e.error ?? "Unknown error",
-        });
+        toast.show({ tone: "error", title: "That badge didn't print", body: e.error ?? "Unknown error" });
       }
     });
     return () => {
@@ -92,183 +108,190 @@ export default function App() {
   async function handleTestPrint() {
     setTesting(true);
     try {
-      const message = await invoke<string>("test_print", {
-        printerName: selectedPrinter,
-      });
+      await invoke<string>("test_print", { printerName: null });
       toast.show({
         tone: "success",
-        title: "Test print queued",
-        body: message,
+        title: "Test card sent",
+        ...(status?.defaultPrinter ? { body: status.defaultPrinter } : {}),
       });
     } catch (e) {
-      toast.show({
-        tone: "error",
-        title: "Test print failed",
-        body: String(e),
-      });
+      toast.show({ tone: "error", title: "The test card didn't print", body: String(e) });
     } finally {
       setTesting(false);
     }
   }
 
-  const checklist = useMemo(() => {
-    if (!status) return [];
-    return [
-      {
-        id: "listener",
-        label: "Local listener running",
-        done: status.listening,
-        helpText: status.listening
-          ? `Accepting print jobs on http://127.0.0.1:${status.listenerPort}.`
-          : "The HTTP listener didn't start. Restart the agent and try again.",
-      },
-      {
-        id: "helper",
-        label: "PDF helper installed",
-        done: status.helperInstalled,
-        helpText: status.helperInstalled
-          ? "SumatraPDF detected — the agent uses it to dispatch PDFs to your printer."
-          : "Install SumatraPDF (https://www.sumatrapdfreader.org/download-free-pdf-viewer) — it's the bridge between PDFs and the Windows print spooler. Stock Windows uses Edge as the PDF handler, but Edge can't print to a specific queue from the command line. SumatraPDF can. Free, 6 MB, install via the official MSI.",
-      },
-      {
-        id: "printer",
-        label: "Printer detected",
-        done: status.printers.length > 0,
-        helpText:
-          status.printers.length > 0
-            ? `${status.printers.length} printer${
-                status.printers.length === 1 ? "" : "s"
-              } available.`
-            : "No printers found. Plug in or install a printer driver.",
-      },
-      {
-        id: "default",
-        label: "Default printer set",
-        done: !!status.defaultPrinter,
-        helpText: status.defaultPrinter
-          ? `${status.defaultPrinter} will receive jobs that don't specify a printer.`
-          : "Open System Settings → Printers and right-click your card printer → Set as Default.",
-      },
-    ];
-  }, [status]);
+  async function handleChoosePrinter(printer: string | null) {
+    setSaving(true);
+    try {
+      await invoke("set_badge_printer", { printerName: printer });
+      await refresh();
+      toast.show({
+        tone: "success",
+        title: "Badge printer saved",
+        body: printer ? `Badges print to ${printer}.` : "Badges print to this computer's default printer.",
+      });
+    } catch (e) {
+      toast.show({ tone: "error", title: "Couldn't save that", body: String(e) });
+    } finally {
+      setSaving(false);
+    }
+  }
 
-  const allReady = checklist.every((c) => c.done);
-  // Setup mode until we have a status AND every checklist item is done. Note
-  // [].every() is vacuously true, so the `!status` guard matters while the
-  // first status is still loading.
-  const setupMode = !status || !allReady;
+  async function handleConnect() {
+    try {
+      await openExternal(await invoke<string>("get_pair_url"));
+      setPairing(true);
+    } catch (e) {
+      toast.show({ tone: "error", title: "Couldn't open your browser", body: String(e) });
+    }
+  }
 
-  // Derive a "Today: N badges" + "Last: Sam Rivera" chip from the
-  // activity ring buffer. We only count successful prints since
-  // midnight local time so failed dispatches don't inflate the
-  // number. The buffer caps at 25 entries — accurate for low-volume
-  // operators and a sensible cap for the rest until we add real
-  // persistence.
+  function openWebApp() {
+    void openExternal(WEB_APP).catch(() => undefined);
+  }
+
+  // The relaunch inherits --hidden from a sign-in start; ask for the window.
+  async function restartShowingWindow() {
+    await invoke("show_window_on_next_start").catch(() => undefined);
+    await relaunch();
+  }
+
   const printsToday = useMemo(() => {
     const start = new Date();
     start.setHours(0, 0, 0, 0);
-    return activity.filter(
-      (a) => a.ok && new Date(a.startedAt).getTime() >= start.getTime(),
-    ).length;
+    return activity.filter((a) => a.ok && new Date(a.startedAt).getTime() >= start.getTime()).length;
   }, [activity]);
-  const lastPrintLabel = useMemo(() => {
-    const last = activity.find((a) => a.ok);
-    if (!last) return null;
-    return last.employeeName ?? last.jobName ?? null;
-  }, [activity]);
+
+  // One state at a time, most fundamental first: a problem that stops
+  // printing outranks one that only stops some of it.
+  const station: Station = (() => {
+    if (!status) return { tone: "neutral", headline: "Starting…", body: "One moment." };
+    if (!status.listening) {
+      return {
+        tone: "problem",
+        headline: "Not running",
+        body: "Another program may be using the agent's connection. Restarting the agent usually fixes it.",
+        action: { label: "Restart the agent", onClick: () => void restartShowingWindow(), primary: true },
+      };
+    }
+    if (!status.helperInstalled) {
+      return {
+        tone: "problem",
+        headline: "Part of the agent is missing",
+        body: "Its printing helper didn't install. Download the agent again and reinstall it.",
+        action: {
+          label: "Download the agent",
+          onClick: () => void openExternal(INSTALL_GUIDE).catch(() => undefined),
+          primary: true,
+        },
+      };
+    }
+    if (status.connection === "notPaired") {
+      return pairing
+        ? {
+            tone: "attention",
+            headline: "Finish in your browser",
+            body: "Sign in to BadgeBadger and confirm this computer. This window updates by itself.",
+            action: { label: "Open the page again", onClick: () => void handleConnect() },
+          }
+        : {
+            tone: "attention",
+            headline: "Not connected yet",
+            body: "Pair it with your BadgeBadger account so badges can print here.",
+            // The docs and the web app's confirm dialog both say "Pair this computer".
+            action: { label: "Pair this computer", onClick: () => void handleConnect(), primary: true },
+          };
+    }
+    if (status.printers.length === 0) {
+      return {
+        tone: "attention",
+        headline: "No printer found",
+        body: "Plug in your badge printer and install its driver. It shows up here by itself.",
+      };
+    }
+    if (status.connection === "offline") {
+      return {
+        tone: "attention",
+        headline: "Can't reach BadgeBadger",
+        body: "Check this computer's internet connection. The agent keeps trying on its own.",
+        action: { label: "Try again", onClick: () => void invoke("recheck_connection") },
+      };
+    }
+    if (!status.defaultPrinter) {
+      return {
+        tone: "attention",
+        headline: "Pick a badge printer",
+        body: "Choose where badges print, under Badge printer below.",
+      };
+    }
+    if (status.connection === "checking") {
+      return { tone: "neutral", headline: "Checking the connection…", body: "Making sure BadgeBadger can reach this computer." };
+    }
+    return { tone: "ready", headline: "Ready to print", body: `Badges print to ${status.defaultPrinter}.` };
+  })();
 
   return (
     <main className="shell">
-      <header className="header">
-        <span className="brand-mark">
-          <img src="/mascot.svg" alt="" aria-hidden />
+      <header className="topbar">
+        <span className="coin" aria-hidden>
+          <img src="/mascot.svg" alt="" />
         </span>
-        <div className="header__title">
-          <h1>
-            <span className="wm-badge">Badge</span>Badger{" "}
-            <span className="header__product">Print Agent</span>
-          </h1>
-          <p className="subtitle">
-            Quietly forwards badge prints from BadgeBadger to your local
-            printer.
-          </p>
-        </div>
-        <button
-          type="button"
-          className="btn btn--primary header__cta"
-          onClick={() => {
-            void openExternal("https://hq.badgebadger.app").catch(() =>
-              undefined,
-            );
-          }}
-        >
-          Open BadgeBadger ↗
+        <p className="wordmark">
+          <span className="wordmark__badge">Badge</span>Badger <span className="wordmark__product">Print Agent</span>
+        </p>
+        <button type="button" className="btn btn--link topbar__open" onClick={openWebApp}>
+          Open BadgeBadger <span aria-hidden>↗</span>
         </button>
       </header>
 
-      <StatusHero
-        ready={allReady}
-        listening={status?.listening ?? false}
-        defaultPrinter={status?.defaultPrinter ?? null}
-        port={status?.listenerPort ?? null}
-        printsToday={printsToday}
-        lastPrintLabel={lastPrintLabel}
-      />
-
       <UpdateBanner state={updater.state} onInstall={updater.install} />
 
-      {/* Two macro-modes, never both. SETUP foregrounds the steps that get
-          an operator to their first print; READY foregrounds what just
-          happened and keeps setup controls quiet below. */}
-      {setupMode ? (
-        <>
-          {status ? <ChecklistCard items={checklist} /> : null}
-          <PrinterCard
-            printers={status?.printers ?? []}
-            defaultPrinter={status?.defaultPrinter ?? null}
-            selectedPrinter={selectedPrinter}
-            onSelectPrinter={setSelectedPrinter}
-            onTestPrint={() => void handleTestPrint()}
-            testing={testing}
-          />
-          <PairingCard ready={!!status?.listening} />
-          <AutostartCallout />
-        </>
-      ) : (
-        <>
-          <AutostartCallout />
-          <ActivityCard items={activity} />
-          <PrinterCard
-            printers={status?.printers ?? []}
-            defaultPrinter={status?.defaultPrinter ?? null}
-            selectedPrinter={selectedPrinter}
-            onSelectPrinter={setSelectedPrinter}
-            onTestPrint={() => void handleTestPrint()}
-            testing={testing}
-          />
-          <PairingCard ready={!!status?.listening} />
-        </>
-      )}
+      <StationCard
+        tone={station.tone}
+        headline={station.headline}
+        body={station.body}
+        action={station.action}
+        computerName={status?.computerName ?? null}
+        connection={status?.listening ? status.connection : null}
+        printsToday={printsToday}
+      />
 
-      <SettingsCard
-        port={status?.listenerPort ?? null}
-        listening={status?.listening ?? false}
+      {autostart === false ? (
+        <div className="notice" role="note">
+          <p>The agent won&rsquo;t start by itself after a restart.</p>
+          <button type="button" className="btn btn--link" onClick={() => void enableAutostart().catch(() => undefined)}>
+            Turn on
+          </button>
+        </div>
+      ) : null}
+
+      {status?.listening ? (
+        <BadgePrinter
+          printers={status.printers}
+          badgePrinter={status.badgePrinter}
+          osDefaultPrinter={status.osDefaultPrinter}
+          saving={saving}
+          testing={testing}
+          onChoose={(p) => void handleChoosePrinter(p)}
+          onTestPrint={() => void handleTestPrint()}
+        />
+      ) : null}
+
+      <RecentPrints items={activity} />
+
+      <Troubleshooting
+        status={status}
         updaterState={updater.state}
         onCheckForUpdates={() => void updater.runCheck()}
+        onRecheck={() => void invoke("recheck_connection")}
       />
 
       <footer className="footer">
-        <span>BadgeBadger Print Agent · v{__APP_VERSION__}</span>
-        <span aria-hidden>·</span>
-        <a
-          href="https://hq.badgebadger.app/help/print-agent"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Help
-        </a>
-        <span aria-hidden>·</span>
         <span>Closing this window keeps the agent running in the tray.</span>
+        <button type="button" className="btn btn--link" onClick={() => void openExternal(HELP).catch(() => undefined)}>
+          Help
+        </button>
       </footer>
 
       <Toaster />

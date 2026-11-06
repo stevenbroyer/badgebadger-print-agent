@@ -23,12 +23,45 @@
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use serde::Deserialize;
+use once_cell::sync::Lazy;
+use serde::{Deserialize, Serialize};
 use tauri::Emitter;
+use tokio::sync::Notify;
 
 use crate::printer;
 
 const DEFAULT_BASE_URL: &str = "https://hq.badgebadger.app";
+
+/// What the polls say about this computer's link to BadgeBadger. The window
+/// shows it, so "is this computer connected?" has a real answer instead of
+/// a pairing card that never goes away.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Connection {
+    /// No answer yet.
+    #[default]
+    Checking,
+    /// BadgeBadger accepted this computer's token.
+    Connected,
+    /// BadgeBadger doesn't know the token: never paired, or unpaired.
+    NotPaired,
+    /// BadgeBadger didn't answer twice in a row.
+    Offline,
+}
+
+// Cuts the current wait short. The window calls it when it regains focus,
+// which is usually the operator coming back from pairing in the browser,
+// so the 60-second unpaired backoff doesn't leave them staring at
+// "Connect this computer".
+static WAKE: Lazy<Notify> = Lazy::new(Notify::new);
+
+pub fn wake() {
+    WAKE.notify_one();
+}
+
+async fn set_connection(state: &crate::SharedState, connection: Connection) {
+    state.lock().await.connection = connection;
+}
 
 #[derive(Debug, Deserialize)]
 struct PollResponse {
@@ -62,7 +95,7 @@ struct PrintEventOut<'a> {
     error: Option<&'a str>,
 }
 
-pub async fn run(app_handle: tauri::AppHandle, token: String) {
+pub async fn run(app_handle: tauri::AppHandle, token: String, state: crate::SharedState) {
     let base_url =
         std::env::var("BADGEBADGER_API_URL").unwrap_or_else(|_| DEFAULT_BASE_URL.to_string());
     let client = match reqwest::Client::builder()
@@ -79,10 +112,13 @@ pub async fn run(app_handle: tauri::AppHandle, token: String) {
 
     let mut idle_streak: u32 = 0;
     let mut auth_failed = false;
+    let mut network_failures: u32 = 0;
     loop {
         match poll_once(&client, &base_url, &token).await {
             Ok(jobs) => {
                 auth_failed = false;
+                network_failures = 0;
+                set_connection(&state, Connection::Connected).await;
                 if jobs.is_empty() {
                     idle_streak = idle_streak.saturating_add(1);
                 } else {
@@ -100,8 +136,15 @@ pub async fn run(app_handle: tauri::AppHandle, token: String) {
                         );
                         auth_failed = true;
                     }
+                    network_failures = 0;
+                    set_connection(&state, Connection::NotPaired).await;
                 } else {
                     tracing::debug!(?err, "cloud dispatch poll failed; will retry");
+                    // One dropped poll isn't worth alarming anyone over.
+                    network_failures = network_failures.saturating_add(1);
+                    if network_failures >= 2 {
+                        set_connection(&state, Connection::Offline).await;
+                    }
                 }
                 idle_streak = idle_streak.saturating_add(1);
             }
@@ -115,7 +158,10 @@ pub async fn run(app_handle: tauri::AppHandle, token: String) {
         } else {
             30_000
         };
-        tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
+        tokio::select! {
+            _ = tokio::time::sleep(Duration::from_millis(sleep_ms)) => {}
+            _ = WAKE.notified() => {}
+        }
     }
 }
 
@@ -154,10 +200,7 @@ async fn process_job(
     // silently retargeting to a similar-named printer.
     let connected = printer::list_printers().unwrap_or_default();
     if !connected.iter().any(|p| p == &job.target_printer) {
-        let msg = format!(
-            "printer '{}' is not connected to this machine",
-            job.target_printer
-        );
+        let msg = format!("{} isn't connected to this computer.", job.target_printer);
         emit_event(
             app_handle,
             &started_at,
@@ -175,7 +218,7 @@ async fn process_job(
     let pdf_bytes = match download_pdf(client, &job.download_url).await {
         Ok(b) => b,
         Err(err) => {
-            let msg = format!("could not download PDF: {err}");
+            let msg = format!("Couldn't download the badge: {err}");
             emit_event(
                 app_handle,
                 &started_at,

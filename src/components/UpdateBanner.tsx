@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { ZapIcon } from "./icons";
@@ -66,6 +67,10 @@ export function useUpdater() {
     const meta = state.update;
     setState({ status: "downloading", update: meta, downloaded: 0, total: null });
     try {
+      // The new version starts with this one's arguments, --hidden included
+      // when it was started at sign-in. Someone is looking at the window, so
+      // it should come back.
+      await invoke("show_window_on_next_start").catch(() => undefined);
       await meta.handle.downloadAndInstall((event) => {
         // Tauri 2 emits Started / Progress / Finished events.
         if (event.event === "Started") {
@@ -104,7 +109,7 @@ type Props = {
 
 export function UpdateBanner({ state, onInstall }: Props) {
   // Render only when there's something to communicate. "checking",
-  // "idle", and "up-to-date" stay silent — the SettingsCard surface
+  // "idle", and "up-to-date" stay silent — the Troubleshooting drawer
   // covers the manual-trigger feedback for those cases.
   if (state.status === "available") {
     return (
@@ -114,12 +119,11 @@ export function UpdateBanner({ state, onInstall }: Props) {
         </div>
         <div className="update-banner__copy">
           <p className="update-banner__title">
-            Update available · v{state.update.version}
+            Version {state.update.version} is ready
           </p>
           <p className="update-banner__body">
-            {state.update.body?.trim()
-              ? truncate(state.update.body, 140)
-              : "A newer agent is ready. Restart to apply — should take a few seconds."}
+            {releaseNotes(state.update) ??
+              "It takes a few seconds, and the agent restarts on its own."}
           </p>
         </div>
         <div className="update-banner__actions">
@@ -128,7 +132,7 @@ export function UpdateBanner({ state, onInstall }: Props) {
             className="btn btn--primary"
             onClick={() => void onInstall()}
           >
-            Restart now
+            Update now
           </button>
         </div>
       </section>
@@ -147,7 +151,7 @@ export function UpdateBanner({ state, onInstall }: Props) {
         </div>
         <div className="update-banner__copy">
           <p className="update-banner__title">
-            Installing v{state.update.version}…
+            Installing version {state.update.version}…
           </p>
           <p className="update-banner__body">
             {pct !== null
@@ -163,10 +167,18 @@ export function UpdateBanner({ state, onInstall }: Props) {
   // agent runs against a fresh repo (before any release has been
   // published) the manifest URL 404s — we don't want operators to
   // see an alarming red banner for an infrastructure state they
-  // can't act on. Errors stay visible in SettingsCard's "Updates"
+  // can't act on. Errors stay visible in the Troubleshooting drawer's version
   // row text (and in tracing logs) so IT / developers can debug.
 
   return null;
+}
+
+// The release workflow writes "v<version>" as the notes, which says
+// nothing the title doesn't, so only real notes are shown.
+function releaseNotes(update: UpdateMeta): string | null {
+  const notes = update.body?.trim();
+  if (!notes || notes === `v${update.version}`) return null;
+  return truncate(notes, 140);
 }
 
 function truncate(s: string, max: number): string {

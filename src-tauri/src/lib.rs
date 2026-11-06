@@ -12,6 +12,7 @@ mod cloud_dispatch;
 mod http_server;
 mod printer;
 mod rate_limit;
+mod settings;
 
 use std::sync::Arc;
 
@@ -30,8 +31,15 @@ use tokio::sync::Mutex;
 pub struct AgentStatus {
     pub listener_port: u16,
     pub listening: bool,
+    /// Where a badge goes when BadgeBadger doesn't name a printer: the
+    /// badge printer if it's installed, else the OS default.
     pub default_printer: Option<String>,
+    pub os_default_printer: Option<String>,
+    /// The printer picked in the agent window, installed or not.
+    pub badge_printer: Option<String>,
     pub printers: Vec<String>,
+    pub connection: cloud_dispatch::Connection,
+    pub computer_name: String,
     /// Whether SumatraPDF is detected on PATH or in a known install
     /// location. Required on Windows for reliable PDF printing —
     /// stock Win10/11 has Edge as the default PDF handler and Edge
@@ -51,23 +59,101 @@ pub struct AgentState {
     /// so the operator can copy it into the BadgeBadger web app to
     /// authorise this workstation.
     pub pairing_token: String,
+    /// Kept current by the cloud-dispatch poll loop.
+    pub connection: cloud_dispatch::Connection,
+    /// From settings.json; see `settings`.
+    pub badge_printer: Option<String>,
 }
 
 pub type SharedState = Arc<Mutex<AgentState>>;
 
+// Passed by the Windows sign-in entry so the agent starts in the tray
+// instead of opening its window every morning. Launches from the Start
+// menu, a shortcut or the installer don't carry it and show the window.
+const HIDDEN_ARG: &str = "--hidden";
+
 #[tauri::command]
 async fn get_status(state: tauri::State<'_, SharedState>) -> Result<AgentStatus, String> {
-    let s = state.lock().await;
+    let (listener_port, listening, connection, badge_printer) = {
+        let s = state.lock().await;
+        (s.listener_port, s.listening, s.connection, s.badge_printer.clone())
+    };
     let printers = printer::list_printers().unwrap_or_default();
-    let default_printer = printer::default_printer().ok().flatten();
-    let helper_installed = printer::helper_installed();
+    let os_default_printer = printer::default_printer().ok().flatten();
+    let default_printer = badge_printer
+        .as_ref()
+        .filter(|p| printers.contains(p))
+        .cloned()
+        .or_else(|| os_default_printer.clone());
     Ok(AgentStatus {
-        listener_port: s.listener_port,
-        listening: s.listening,
+        listener_port,
+        listening,
         default_printer,
+        os_default_printer,
+        badge_printer,
         printers,
-        helper_installed,
+        helper_installed: printer::helper_installed(),
+        connection,
+        computer_name: computer_name(),
     })
+}
+
+fn computer_name() -> String {
+    hostname::get()
+        .ok()
+        .and_then(|s| s.into_string().ok())
+        .unwrap_or_else(|| "this-computer".to_string())
+}
+
+// Picks the printer a badge goes to when BadgeBadger doesn't name one, or
+// clears it (None) to follow the OS default again.
+#[tauri::command]
+async fn set_badge_printer(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SharedState>,
+    printer_name: Option<String>,
+) -> Result<(), String> {
+    let printer_name = printer_name.filter(|p| !p.trim().is_empty());
+    if let Some(p) = &printer_name {
+        let installed = printer::list_printers().map_err(|e| e.to_string())?;
+        if !installed.contains(p) {
+            return Err(format!("{p} isn't installed on this computer."));
+        }
+    }
+    let mut s = state.lock().await;
+    settings::save(
+        &app,
+        &settings::Settings {
+            badge_printer: printer_name.clone(),
+        },
+    )
+    .map_err(|e| format!("Couldn't save the setting: {e}"))?;
+    s.badge_printer = printer_name;
+    Ok(())
+}
+
+#[tauri::command]
+fn recheck_connection() {
+    cloud_dispatch::wake();
+}
+
+// The updater and "Restart the agent" both relaunch with this process's
+// arguments, so an agent started at sign-in with --hidden would come back
+// hidden right after someone clicked a button in its window. The window
+// calls this first, and the next start shows the window once.
+#[tauri::command]
+fn show_window_on_next_start(app: tauri::AppHandle) -> Result<(), String> {
+    let marker = show_next_marker(&app).map_err(|e| e.to_string())?;
+    std::fs::write(marker, "1").map_err(|e| e.to_string())
+}
+
+fn show_next_marker(app: &tauri::AppHandle) -> anyhow::Result<std::path::PathBuf> {
+    let dir = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|e| anyhow::anyhow!("no app-local data dir: {e}"))?;
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir.join("show_window_next_start"))
 }
 
 #[tauri::command]
@@ -94,10 +180,7 @@ async fn get_pair_url(state: tauri::State<'_, SharedState>) -> Result<String, St
     let token = s.pairing_token.clone();
     drop(s);
 
-    let hostname = hostname::get()
-        .ok()
-        .and_then(|s| s.into_string().ok())
-        .unwrap_or_else(|| "this-computer".to_string());
+    let hostname = computer_name();
 
     let platform = if cfg!(target_os = "windows") {
         "windows"
@@ -126,21 +209,23 @@ async fn get_pair_url(state: tauri::State<'_, SharedState>) -> Result<String, St
 #[tauri::command]
 async fn test_print(
     app: tauri::AppHandle,
+    state: tauri::State<'_, SharedState>,
     printer_name: Option<String>,
 ) -> Result<String, String> {
     // Submit a hand-rolled minimal CR-80 PDF to the chosen printer
-    // (or OS default if `printer_name` is None / empty). Lets the
-    // operator confirm the agent's print dispatch works without
+    // (or wherever a badge would go if `printer_name` is None / empty).
+    // Lets the operator confirm the agent's print dispatch works without
     // involving the web app. Emits the same `print` event the HTTP
     // path uses so test prints land in the in-app activity feed.
     let started_at = http_server_iso_now();
     let pdf = test_card_pdf();
+    let badge_printer = state.lock().await.badge_printer.clone();
     let printer = match printer_name {
         Some(p) if !p.trim().is_empty() => p,
-        _ => match printer::default_printer() {
+        _ => match printer::effective_default(badge_printer.as_deref()) {
             Ok(Some(p)) => p,
             _ => {
-                let msg = "No printer selected and no OS default configured. Pick one from the dropdown or set a system default.".to_string();
+                let msg = "There's no printer to send it to. Pick a badge printer, or set a default printer on this computer.".to_string();
                 emit_print(&app, &started_at, "(unset)", Some("Test print"), false, Some(&msg));
                 return Err(msg);
             }
@@ -193,10 +278,19 @@ fn ensure_autostart_default(app: &tauri::App) -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("no app-local data dir: {e}"))?;
     std::fs::create_dir_all(&data_dir)?;
     let marker = data_dir.join("autostart_initialized");
+    let autolaunch = app.handle().autolaunch();
     if marker.exists() {
+        // Agents installed before 0.7.0 registered the sign-in entry
+        // without --hidden. Rewriting it while it's on brings them in
+        // line; an entry the user turned off is left alone.
+        #[cfg(windows)]
+        if autolaunch.is_enabled().unwrap_or(false) {
+            autolaunch
+                .enable()
+                .map_err(|e| anyhow::anyhow!("autolaunch refresh failed: {e}"))?;
+        }
         return Ok(());
     }
-    let autolaunch = app.handle().autolaunch();
     if !autolaunch.is_enabled().unwrap_or(false) {
         autolaunch
             .enable()
@@ -324,6 +418,15 @@ pub fn run() {
     let listener_state = shared_state.clone();
 
     tauri::Builder::default()
+        // Must be the first plugin. A second launch (Start menu, a
+        // shortcut, the sign-in entry) used to start another copy that
+        // couldn't get port 9988 and looked broken next to the real one.
+        // Now it exits and the running agent shows its window instead.
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if !args.iter().any(|a| a == HIDDEN_ARG) {
+                show_main_window(app);
+            }
+        }))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_process::init())
@@ -332,14 +435,21 @@ pub fn run() {
             // macOS-only enum, ignored on Windows — autostart on
             // Windows uses the registry Run key under the hood.
             MacosLauncher::LaunchAgent,
-            None,
+            if cfg!(windows) {
+                Some(vec![HIDDEN_ARG])
+            } else {
+                None
+            },
         ))
         .manage(shared_state)
         .invoke_handler(tauri::generate_handler![
             get_status,
             get_pairing_token,
             get_pair_url,
-            test_print
+            test_print,
+            set_badge_printer,
+            recheck_connection,
+            show_window_on_next_start
         ])
         .setup(move |app| {
             let app_handle = app.handle().clone();
@@ -362,7 +472,11 @@ pub fn run() {
             // off the cloud-dispatch poll loop in parallel — the same
             // token authenticates against /api/agent/jobs upstream so
             // remote prints can land on this machine.
+            let saved = settings::load(app.handle());
             tauri::async_runtime::spawn(async move {
+                // Before the listener starts, so the first print already
+                // goes to the saved badge printer.
+                token_state.lock().await.badge_printer = saved.badge_printer;
                 let token = match auth::load_or_create_token(&app_handle).await {
                     Ok(t) => t,
                     Err(err) => {
@@ -379,8 +493,9 @@ pub fn run() {
                 // down the HTTP listener (and vice versa).
                 let dispatch_handle = app_handle.clone();
                 let dispatch_token = token.clone();
+                let dispatch_state = token_state.clone();
                 tauri::async_runtime::spawn(async move {
-                    cloud_dispatch::run(dispatch_handle, dispatch_token).await;
+                    cloud_dispatch::run(dispatch_handle, dispatch_token, dispatch_state).await;
                 });
                 if let Err(err) = http_server::serve(
                     http_server::DEFAULT_PORT,
@@ -442,6 +557,20 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
+
+            // The window is created hidden (tauri.conf.json) so a sign-in
+            // launch never flashes it. Every other launch shows it, and so
+            // does a relaunch the window asked for (see
+            // show_window_on_next_start), which inherits --hidden.
+            let show_requested = show_next_marker(app.handle())
+                .ok()
+                .filter(|marker| marker.exists())
+                .map(|marker| std::fs::remove_file(marker))
+                .is_some();
+            let started_at_sign_in = cfg!(windows) && std::env::args().any(|a| a == HIDDEN_ARG);
+            if show_requested || !started_at_sign_in {
+                show_main_window(app.handle());
+            }
 
             Ok(())
         })
